@@ -100,37 +100,93 @@ Parameters:
 
 ## Performance Data
 
-The following numbers were measured locally on `2026-03-28` in the current
-workspace environment, with:
+The following numbers were measured locally on `2026-03-28` with the latest
+code by running `test/run_bench.sh` (`make run`) in the current workspace
+environment, with:
 
 - build flags: `-std=c++17 -O2 -mcx16 -pthread`
+- scenarios: `1P-1C`, `4P-4C`, `1P-4C`, `4P-1C`, `8P-8C`
 - workload: `200000` items per producer
 - rounds: `5`
+
+Top 3 by `Ops/sec` in each scenario are highlighted in bold.
+
+### 1P-1C
+
+| Queue | Wall ms | Ops/sec |
+| --- | ---: | ---: |
+| std::mutex+queue | 18.37 | 10.89M |
+| Two-Lock Queue | 20.80 | 9.62M |
+| CAS Lock-Free | 23.41 | 8.54M |
+| **Dvyukov MPMC** | **2.26** | **88.58M** |
+| **Dvyukov MPMC Sharded** | **7.48** | **26.76M** |
+| Moodycamel | 8.32 | 24.03M |
+| **SimpleMoodycamel** | **4.74** | **42.21M** |
+| TBB | 13.83 | 14.46M |
+
+### 4P-4C
+
+| Queue | Wall ms | Ops/sec |
+| --- | ---: | ---: |
+| std::mutex+queue | 127.39 | 6.28M |
+| Two-Lock Queue | 122.05 | 6.55M |
+| CAS Lock-Free | 211.95 | 3.77M |
+| Dvyukov MPMC | 91.59 | 8.74M |
+| **Dvyukov MPMC Sharded** | **50.86** | **15.73M** |
+| **Moodycamel** | **54.76** | **14.61M** |
+| **SimpleMoodycamel** | **33.11** | **24.16M** |
+| TBB | 72.38 | 11.05M |
+
+### 1P-4C
+
+| Queue | Wall ms | Ops/sec |
+| --- | ---: | ---: |
+| std::mutex+queue | 48.49 | 4.12M |
+| Two-Lock Queue | 31.89 | 6.27M |
+| CAS Lock-Free | 49.99 | 4.00M |
+| **Dvyukov MPMC** | **20.34** | **9.83M** |
+| Dvyukov MPMC Sharded | 22.62 | 8.84M |
+| **Moodycamel** | **18.51** | **10.80M** |
+| **SimpleMoodycamel** | **10.82** | **18.49M** |
+| TBB | 21.85 | 9.15M |
+
+### 4P-1C
+
+| Queue | Wall ms | Ops/sec |
+| --- | ---: | ---: |
+| std::mutex+queue | 71.04 | 11.26M |
+| Two-Lock Queue | 76.84 | 10.41M |
+| CAS Lock-Free | 159.31 | 5.02M |
+| Dvyukov MPMC | 78.31 | 10.22M |
+| **Dvyukov MPMC Sharded** | **10.50** | **76.20M** |
+| **Moodycamel** | **24.07** | **33.24M** |
+| **SimpleMoodycamel** | **20.51** | **39.01M** |
+| TBB | 52.03 | 15.37M |
 
 ### 8P-8C
 
 | Queue | Wall ms | Ops/sec |
 | --- | ---: | ---: |
-| Dvyukov MPMC | 231.98 | 6.90M |
-| Dvyukov MPMC Sharded | 98.33 | 16.27M |
-| SimpleMoodycamel | 83.52 | 19.16M |
-
-### 16P-16C
-
-| Queue | Wall ms | Ops/sec |
-| --- | ---: | ---: |
-| Dvyukov MPMC | 487.93 | 6.56M |
-| Dvyukov MPMC Sharded | 241.92 | 13.23M |
-| SimpleMoodycamel | 219.22 | 14.60M |
+| std::mutex+queue | 344.90 | 4.64M |
+| Two-Lock Queue | 340.13 | 4.70M |
+| CAS Lock-Free | 618.43 | 2.59M |
+| Dvyukov MPMC | 259.60 | 6.16M |
+| **Dvyukov MPMC Sharded** | **59.45** | **26.91M** |
+| **Moodycamel** | **109.61** | **14.60M** |
+| **SimpleMoodycamel** | **66.43** | **24.09M** |
+| TBB | 171.02 | 9.36M |
 
 ## Observations
 
-- Baseline Dvyukov MPMC is limited by contention on one global enqueue index
-  and one global dequeue index.
-- Sharding is materially effective in the measured 8P-8C and 16P-16C cases,
-  reaching about 2.36x the baseline throughput at 8P-8C and about 2.02x at
-  16P-16C in the latest run.
-- `SimpleConcurrentQueue` is still faster in these runs because it goes further
-  than sharding: producers mostly avoid a shared enqueue hotspot entirely.
-- Default shard count is `16` because it performed better than `8` in the
-  8P-8C measurements collected during this round of tuning.
+- Baseline Dvyukov MPMC is strongest in the low-contention `1P-1C` case, where
+  its compact bounded-ring design has very little coordination overhead.
+- Under real MPMC contention, the single global `enqueue_pos_` and
+  `dequeue_pos_` become the dominant bottleneck for baseline Dvyukov.
+- `Dvyukov MPMC Sharded` is the strongest performer in the mixed/high-contention
+  cases among the Dvyukov-family variants, especially `4P-1C` and `8P-8C`.
+- `SimpleMoodycamel` is the most consistent overall top-tier performer across
+  the benchmark matrix because producers largely avoid a single shared enqueue
+  hotspot.
+- Default shard count remains `16`, but the benchmark matrix also shows that
+  sharding is a throughput-oriented tradeoff rather than a strict replacement
+  for the baseline queue in every access pattern.
