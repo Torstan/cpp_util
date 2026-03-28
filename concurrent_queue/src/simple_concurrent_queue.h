@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -12,7 +13,7 @@
 
 static constexpr int SC_BLOCK_SIZE = 32;
 static constexpr int SC_CACHE_LINE = 64;
-static constexpr int SC_MAX_PRODUCERS = 64;
+static constexpr int SC_MAX_PRODUCERS = 256;
 
 namespace simple_mc {
 
@@ -154,6 +155,11 @@ public:
     uint64_t slot = tail & (SC_BLOCK_SIZE - 1);
     uint64_t block_idx = tail / SC_BLOCK_SIZE;
 
+    // Check if we exceed BlockIndex capacity
+    if (block_idx >= BlockIndex<T>::MAX_SEGS * BlockIndex<T>::SEG_SIZE) {
+      throw std::runtime_error("SimpleConcurrentQueue: sub-queue capacity exceeded");
+    }
+
     if (slot == 0 && tail != 0) {
       auto *block = new Block<T>(tail);
       p->tail_block->next = block;
@@ -214,6 +220,10 @@ private:
     if (my_producer_ && my_producer_owner_ == this)
       return my_producer_;
 
+    if (producer_count_.load(std::memory_order_relaxed) >= SC_MAX_PRODUCERS) {
+      throw std::runtime_error("SimpleConcurrentQueue: too many producers");
+    }
+
     auto *p = new ProducerSubQueue<T>();
 
     ProducerSubQueue<T> *head =
@@ -258,6 +268,9 @@ private:
     uint64_t slot_in_block = my_slot & (SC_BLOCK_SIZE - 1);
 
     // Spin until producer commits this slot.
+    // NOTE: This spin is likely redundant because tail_index is updated with
+    // release semantics after committed is stored with release semantics,
+    // and we loaded tail_index with acquire semantics above.
     int spins = 0;
     while (block->committed[slot_in_block].load(std::memory_order_acquire) ==
            0) {

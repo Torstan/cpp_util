@@ -92,6 +92,10 @@ static inline void enqueue(queue_t *q, data_t value) {
       std::memory_order_release, std::memory_order_relaxed);
 }
 
+// Michael-Scott style linked queue using CAS on head/tail pointers.
+// Defer reclamation until queue destruction. Immediate free here can race
+// with other consumers still reading the old head pointer.
+// Note: This results in increased memory usage (RSS) during benchmarks.
 static inline bool dequeue(queue_t *q, data_t *pvalue) {
   pointer_t head;
   int spins = 0;
