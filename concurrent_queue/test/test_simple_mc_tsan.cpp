@@ -102,6 +102,6 @@ int main() {
   test_multi_instance_same_thread();
   test_string_type_basic();
   stress_mpmc_int();
-  std::printf("SimpleMC TSAN tests passed\n");
+  std::printf("SimpleMoodycamel TSAN tests passed\n");
   return 0;
 }
