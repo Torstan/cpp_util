@@ -10,6 +10,9 @@ struct node_t {
   data_t value;
   std::atomic<node_t *> next;
 };
+// Two-lock queue using separate head/tail mutexes.
+// Uses alignas(LFQ_CACHE_LINE) to isolate head and tail components, 
+// ensuring producer and consumer do not contend on the same cache line.
 struct queue_t {
   alignas(LFQ_CACHE_LINE) node_t *head;
   mutex_t h_lock;
