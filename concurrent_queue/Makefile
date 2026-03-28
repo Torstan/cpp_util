@@ -35,13 +35,14 @@ UBSAN_BENCH_ARGS ?= -p 4 -c 4 -n 50000 -r 1
 SAN_TBB_EXTRA_LDLIBS ?= -ltbb
 SAN_CLEAN_ENV ?= env -u LD_LIBRARY_PATH -u LD_PRELOAD -u TSAN_OPTIONS -u ASAN_OPTIONS -u UBSAN_OPTIONS
 
-QUEUES := mutex_queue two_lock cas_lf dvyukov_mpmc moodycamel simple_mc tbb
+QUEUES := mutex_queue two_lock cas_lf dvyukov_mpmc dvyukov_mpmc_sharded moodycamel simple_mc tbb
 DEPS := $(patsubst %,$(DEP_DIR)/%.d,$(QUEUES))
 
 mutex_queue_DEF := USE_MUTEX_QUEUE
 two_lock_DEF := USE_TWO_LOCK
 cas_lf_DEF := USE_CAS_LF
 dvyukov_mpmc_DEF := USE_DVYUKOV_MPMC
+dvyukov_mpmc_sharded_DEF := USE_DVYUKOV_MPMC_SHARDED
 moodycamel_DEF := USE_MOODYCAMEL
 simple_mc_DEF := USE_SIMPLE_MC
 tbb_DEF := USE_TBB

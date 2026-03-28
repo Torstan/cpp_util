@@ -70,6 +70,35 @@ struct BenchQueue {
   static const char* name() { return "Dvyukov MPMC"; }
 };
 
+#elif defined(USE_DVYUKOV_MPMC_SHARDED)
+
+#include "dvyukov_mpmc_optimized.h"
+#ifndef DVYUKOV_SHARD_COUNT
+#define DVYUKOV_SHARD_COUNT 16
+#endif
+#define DVYUKOV_STR_IMPL(x) #x
+#define DVYUKOV_STR(x) DVYUKOV_STR_IMPL(x)
+struct BenchQueue {
+  dvyukov::mpmc_bounded_queue_sharded<int, DVYUKOV_SHARD_COUNT> q_{1u << 22};
+  void init() {}
+  void enqueue(int v) {
+    int spins = 0;
+    while (!q_.enqueue(v)) {
+      if ((++spins & 63) == 0)
+        std::this_thread::yield();
+    }
+  }
+  bool dequeue(int *v) { return q_.dequeue(*v); }
+  static const char* name() {
+    if constexpr (DVYUKOV_SHARD_COUNT == 16) {
+      return "Dvyukov MPMC Sharded";
+    }
+    return "Dvyukov MPMC Sharded(" DVYUKOV_STR(DVYUKOV_SHARD_COUNT) ")";
+  }
+};
+#undef DVYUKOV_STR
+#undef DVYUKOV_STR_IMPL
+
 #elif defined(USE_MOODYCAMEL)
 
 #include "concurrent_queue.h"
@@ -100,11 +129,11 @@ struct BenchQueue {
   void init() {}
   void enqueue(int v) { q_.enqueue(v); }
   bool dequeue(int *v) { return q_.dequeue(v); }
-  static const char* name() { return "SimpleMC"; }
+  static const char* name() { return "SimpleMoodycamel"; }
 };
 
 #else
-#error "Define one of: USE_MUTEX_QUEUE, USE_TWO_LOCK, USE_CAS_LF, USE_DVYUKOV_MPMC, USE_MOODYCAMEL, USE_SIMPLE_MC, USE_TBB"
+#error "Define one of: USE_MUTEX_QUEUE, USE_TWO_LOCK, USE_CAS_LF, USE_DVYUKOV_MPMC, USE_DVYUKOV_MPMC_SHARDED, USE_MOODYCAMEL, USE_SIMPLE_MC, USE_TBB"
 #endif
 
 // ============================================================

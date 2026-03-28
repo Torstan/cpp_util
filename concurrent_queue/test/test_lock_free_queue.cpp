@@ -30,6 +30,7 @@
 #undef data_t
 
 #include "lock_free_queue2.h"
+#include "dvyukov_mpmc_optimized.h"
 #include "mpmc_queue.h"
 #include "simple_concurrent_queue.h"
 
@@ -113,6 +114,26 @@ struct DvyukovMpmcQueueAdapter {
 
   static const char* name() {
     return "DvyukovMPMC";
+  }
+};
+
+struct DvyukovShardedQueueAdapter {
+  dvyukov::mpmc_bounded_queue_sharded<int> q_{1u << 18};
+
+  void enqueue(int value) {
+    int spins = 0;
+    while (!q_.enqueue(value)) {
+      if ((++spins & 63) == 0)
+        std::this_thread::yield();
+    }
+  }
+
+  bool dequeue(int* value) {
+    return q_.dequeue(*value);
+  }
+
+  static const char* name() {
+    return "DvyukovMPMCSharded";
   }
 };
 
@@ -330,6 +351,7 @@ int main() {
   run_common_queue_tests<CasLockFreeQueueAdapter>();
   run_common_queue_tests<SimpleMcQueueAdapter>();
   run_common_queue_tests<DvyukovMpmcQueueAdapter>();
+  run_common_queue_tests<DvyukovShardedQueueAdapter>();
 
   test_simple_mc_template_type_support();
   test_simple_mc_multi_instance_isolation();
