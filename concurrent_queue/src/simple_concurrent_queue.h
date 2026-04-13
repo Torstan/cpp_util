@@ -155,12 +155,10 @@ public:
     uint64_t slot = tail & (SC_BLOCK_SIZE - 1);
     uint64_t block_idx = tail / SC_BLOCK_SIZE;
 
-    // Check if we exceed BlockIndex capacity
-    if (block_idx >= BlockIndex<T>::MAX_SEGS * BlockIndex<T>::SEG_SIZE) {
-      throw std::runtime_error("SimpleConcurrentQueue: sub-queue capacity exceeded");
-    }
-
     if (slot == 0 && tail != 0) {
+      if (block_idx >= BlockIndex<T>::MAX_SEGS * BlockIndex<T>::SEG_SIZE) {
+        throw std::runtime_error("SimpleConcurrentQueue: sub-queue capacity exceeded");
+      }
       auto *block = new Block<T>(tail);
       p->tail_block->next = block;
       p->tail_block = block;
@@ -267,10 +265,9 @@ private:
 
     uint64_t slot_in_block = my_slot & (SC_BLOCK_SIZE - 1);
 
-    // Spin until producer commits this slot.
-    // NOTE: This spin is likely redundant because tail_index is updated with
-    // release semantics after committed is stored with release semantics,
-    // and we loaded tail_index with acquire semantics above.
+    // Safety: wait for producer to commit this slot. Needed because
+    // head_index CAS can succeed before the producer's release-store
+    // to committed[] is visible to this consumer thread.
     int spins = 0;
     while (block->committed[slot_in_block].load(std::memory_order_acquire) ==
            0) {
