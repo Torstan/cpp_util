@@ -17,7 +17,7 @@
 #define enqueue two_lock_enqueue
 #define dequeue two_lock_dequeue
 #define LFQ_CACHE_LINE TWO_LOCK_LFQ_CACHE_LINE
-#include "lock_free_queue.h"
+#include "two_mutex.h"
 #undef LFQ_CACHE_LINE
 #undef dequeue
 #undef enqueue
@@ -29,10 +29,10 @@
 #undef mutex_t
 #undef data_t
 
-#include "lock_free_queue2.h"
-#include "dvyukov_mpmc_optimized.h"
-#include "mpmc_queue.h"
-#include "simple_concurrent_queue.h"
+#include "one_queue_with_cas.h"
+#include "simplified_mpmc_dmitry.h"
+#include "mpmc_dmitry.h"
+#include "simplified_moodycamel.h"
 
 namespace {
 
@@ -118,7 +118,7 @@ struct DvyukovMpmcQueueAdapter {
 };
 
 struct DvyukovShardedQueueAdapter {
-  dvyukov::mpmc_bounded_queue_sharded<int> q_{1u << 18};
+  dmitry::mpmc_bounded_queue_sharded<int> q_{1u << 18};
 
   void enqueue(int value) {
     int spins = 0;
