@@ -5,20 +5,22 @@ tests, and benchmark drivers.
 
 ## Layout
 
-- `src/lock_free_queue.h`
+- `src/two_mutex.h`
   - Two-lock queue based on separate head/tail mutexes.
-- `src/lock_free_queue2.h`
+- `src/one_queue_with_cas.h`
   - CAS-based Michael-Scott style linked queue.
   - Node reclamation is deferred until `destroy()` to avoid concurrent
     use-after-free.
-- `src/mpmc_queue.h`
+- `src/mpmc_dmitry.h`
   - Baseline bounded MPMC queue from Dmitry Vyukov.
   - Single global `enqueue_pos_` and `dequeue_pos_`.
-- `src/dvyukov_mpmc_optimized.h`
+- `src/simplified_mpmc_dmitry.h`
   - Sharded wrapper around a simplified inlined Vyukov bounded queue core.
   - Default shard count is `16`.
-  - Does not depend on `mpmc_queue.h`.
-- `src/simple_concurrent_queue.h`
+  - Does not depend on `mpmc_dmitry.h`.
+- `src/moodycamel.h`
+  - Original Moodycamel lock-free MPMC queue.
+- `src/simplified_moodycamel.h`
   - Simplified Moodycamel-style MPMC queue with per-producer sub-queues.
 - `test/test_lock_free_queue.cpp`
   - Functional regression tests.

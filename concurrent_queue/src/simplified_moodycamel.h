@@ -11,34 +11,34 @@
 // Simplified Moodycamel-style MPMC lock-free queue.
 // Key design: per-producer sub-queues, block-based storage, CAS dequeue claim.
 
-static constexpr int SC_BLOCK_SIZE = 32;
-static constexpr int SC_CACHE_LINE = 64;
-static constexpr int SC_MAX_PRODUCERS = 256;
+static constexpr std::size_t SC_BLOCK_SIZE = 32;
+static constexpr std::size_t SC_CACHE_LINE = 64;
+static constexpr std::size_t SC_MAX_PRODUCERS = 256;
 
 namespace simple_mc {
 
 template <typename T> struct Block {
   static_assert(!std::is_reference_v<T>, "T must not be a reference type");
 
-  alignas(T) unsigned char storage[SC_BLOCK_SIZE][sizeof(T)];
-  std::atomic<int> committed[SC_BLOCK_SIZE]; // 0=not ready, 1=readable
+  alignas(T) std::byte storage[SC_BLOCK_SIZE][sizeof(T)];
+  std::atomic<uint8_t> committed[SC_BLOCK_SIZE]; // 0=not ready, 1=readable
   Block *next{nullptr};
   uint64_t base_index{0};
 
   explicit Block(uint64_t base) : next(nullptr), base_index(base) {
-    for (int i = 0; i < SC_BLOCK_SIZE; i++)
+    for (std::size_t i = 0; i < SC_BLOCK_SIZE; ++i)
       committed[i].store(0, std::memory_order_relaxed);
   }
 
-  T *ptr(uint64_t slot) {
+  T *ptr(std::size_t slot) {
     return std::launder(reinterpret_cast<T *>(&storage[slot]));
   }
 
-  template <typename... Args> void construct(uint64_t slot, Args &&...args) {
+  template <typename... Args> void construct(std::size_t slot, Args &&...args) {
     new (&storage[slot]) T(std::forward<Args>(args)...);
   }
 
-  void destroy(uint64_t slot) {
+  void destroy(std::size_t slot) {
     if constexpr (!std::is_trivially_destructible_v<T>) {
       ptr(slot)->~T();
     }
@@ -71,8 +71,8 @@ template <typename T> struct BlockIndex {
   }
 
   void store(uint64_t block_idx, Block<T> *b) {
-    int seg_idx = static_cast<int>(block_idx >> SEG_SHIFT);
-    int slot = static_cast<int>(block_idx & (SEG_SIZE - 1));
+    std::size_t seg_idx = static_cast<std::size_t>(block_idx >> SEG_SHIFT);
+    std::size_t slot = static_cast<std::size_t>(block_idx & (SEG_SIZE - 1));
     auto *seg = segments[seg_idx].load(std::memory_order_acquire);
     if (!seg) {
       seg = new std::atomic<Block<T> *>[SEG_SIZE] {};
@@ -82,8 +82,8 @@ template <typename T> struct BlockIndex {
   }
 
   Block<T> *load(uint64_t block_idx) {
-    int seg_idx = static_cast<int>(block_idx >> SEG_SHIFT);
-    int slot = static_cast<int>(block_idx & (SEG_SIZE - 1));
+    std::size_t seg_idx = static_cast<std::size_t>(block_idx >> SEG_SHIFT);
+    std::size_t slot = static_cast<std::size_t>(block_idx & (SEG_SIZE - 1));
     auto *seg = segments[seg_idx].load(std::memory_order_acquire);
     if (!seg)
       return nullptr;
@@ -111,18 +111,27 @@ template <typename T> struct ProducerSubQueue {
   }
 
   ~ProducerSubQueue() {
-    // Destroy elements that are still in queue (head..tail).
+    // Destroy any still-live elements using contiguous block iteration to keep
+    // the destructor cache-friendly.
     uint64_t head = head_index.load(std::memory_order_relaxed);
     uint64_t tail = tail_index.load(std::memory_order_relaxed);
-    for (uint64_t idx = head; idx < tail; ++idx) {
-      uint64_t block_idx = idx / SC_BLOCK_SIZE;
-      uint64_t slot = idx & (SC_BLOCK_SIZE - 1);
+    uint64_t index = head;
+    while (index < tail) {
+      uint64_t block_idx = index / SC_BLOCK_SIZE;
       Block<T> *block = block_index.load(block_idx);
-      if (block)
-        block->destroy(slot);
+      if (!block) {
+        break;
+      }
+      uint64_t block_end = ((index / SC_BLOCK_SIZE) + 1) * SC_BLOCK_SIZE;
+      if (block_end > tail) {
+        block_end = tail;
+      }
+      for (; index < block_end; ++index) {
+        block->destroy(static_cast<std::size_t>(index & (SC_BLOCK_SIZE - 1)));
+      }
     }
 
-    // Free all blocks via block linked list.
+    // Free all blocks via the linked list.
     Block<T> *b = block_index.load(0);
     while (b) {
       Block<T> *n = b->next;
@@ -150,23 +159,24 @@ public:
 
   template <typename... Args> void emplace(Args &&...args) {
     ProducerSubQueue<T> *p = get_or_create_producer();
-    uint64_t tail =
-        p->tail_index.load(std::memory_order_relaxed); // single writer
-    uint64_t slot = tail & (SC_BLOCK_SIZE - 1);
-    uint64_t block_idx = tail / SC_BLOCK_SIZE;
+    const uint64_t tail = p->tail_index.load(std::memory_order_relaxed);
+    const std::size_t slot = static_cast<std::size_t>(tail & (SC_BLOCK_SIZE - 1));
+    const uint64_t block_idx = tail / SC_BLOCK_SIZE;
 
+    Block<T> *tail_block = p->tail_block;
     if (slot == 0 && tail != 0) {
       if (block_idx >= BlockIndex<T>::MAX_SEGS * BlockIndex<T>::SEG_SIZE) {
         throw std::runtime_error("SimpleConcurrentQueue: sub-queue capacity exceeded");
       }
       auto *block = new Block<T>(tail);
-      p->tail_block->next = block;
+      tail_block->next = block;
       p->tail_block = block;
+      tail_block = block;
       p->block_index.store(block_idx, block);
     }
 
-    p->tail_block->construct(slot, std::forward<Args>(args)...);
-    p->tail_block->committed[slot].store(1, std::memory_order_release);
+    tail_block->construct(slot, std::forward<Args>(args)...);
+    tail_block->committed[slot].store(1, std::memory_order_release);
     p->tail_index.store(tail + 1, std::memory_order_release);
   }
 
@@ -181,7 +191,7 @@ public:
     // Per-consumer cached producer snapshot.
     thread_local ProducerSubQueue<T> *cached_producers[SC_MAX_PRODUCERS];
     thread_local int cached_count = 0;
-    thread_local SimpleConcurrentQueue *cached_queue = nullptr;
+    thread_local const SimpleConcurrentQueue *cached_queue = nullptr;
     thread_local uint32_t rr = 0;
 
     if (cached_queue != this || cached_count != count) {
@@ -207,8 +217,8 @@ public:
   bool dequeue(T &v) { return dequeue(&v); }
 
 private:
-  std::atomic<ProducerSubQueue<T> *> producer_list_head_;
-  std::atomic<int> producer_count_;
+  alignas(SC_CACHE_LINE) std::atomic<ProducerSubQueue<T> *> producer_list_head_;
+  alignas(SC_CACHE_LINE) std::atomic<int> producer_count_;
 
   static inline thread_local ProducerSubQueue<T> *my_producer_ = nullptr;
   static inline thread_local const SimpleConcurrentQueue *my_producer_owner_ =
