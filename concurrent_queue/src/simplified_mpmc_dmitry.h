@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-namespace dvyukov {
+namespace dmitry {
 
 namespace detail {
 
@@ -177,4 +177,4 @@ private:
   mutable std::atomic<size_t> next_consumer_shard_{0};
 };
 
-} // namespace dvyukov
+} // namespace dmitry
