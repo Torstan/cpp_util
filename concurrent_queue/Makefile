@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 CXX ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -mcx16 -pthread
+CXXFLAGS ?= -std=c++17 -O0 -g -mcx16 -pthread
 CPPFLAGS ?= -I../.. -Isrc
 LDFLAGS ?=
 LDLIBS ?= -latomic -ltbb
