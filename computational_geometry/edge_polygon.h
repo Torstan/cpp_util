@@ -189,18 +189,22 @@ inline std::vector<Point> ConvexHull(std::vector<Point>& points) {
   return hull;
 }
 
-inline double Area(const std::vector<Point>& polygon) {
+inline double SignedArea(const std::vector<Point>& polygon) {
   const size_t n = polygon.size();
   if (n < 3) {
     return 0.0;
   }
 
   double area = 0.0;
-  const Point& origin = polygon[0];
-  for (size_t i = 1; i < n - 1; ++i) {
-    area += (polygon[i] - origin).Cross(polygon[i + 1] - origin);
+  for (size_t i = 0; i < n; ++i) {
+    const size_t j = (i + 1) % n;
+    area += polygon[i].X() * polygon[j].Y() - polygon[j].X() * polygon[i].Y();
   }
-  return std::abs(area) * 0.5;
+  return area * 0.5;
+}
+
+inline double Area(const std::vector<Point>& polygon) {
+  return std::abs(SignedArea(polygon));
 }
 
 inline double AreaSimple(const std::vector<Point>& polygon) {
@@ -226,7 +230,7 @@ class Polygon {
  public:
   explicit Polygon(const std::vector<Point>& points) : vertices_(points) {
     if (vertices_.size() >= 3) {
-      if (Area(vertices_) < 0) {
+      if (SignedArea(vertices_) < 0) {
         std::reverse(vertices_.begin(), vertices_.end());
       }
     }
