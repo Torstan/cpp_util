@@ -9,6 +9,7 @@
 #include "kdtree.h"
 
 void testBasicOperations();
+void testPointInitialization();
 void testBuildFunction();
 void testInsertFunction();
 void testNearestNeighbor();
@@ -40,8 +41,28 @@ void testBasicOperations() {
   std::cout << "  ✓ 基本操作测试通过" << std::endl;
 }
 
+void testPointInitialization() {
+  std::cout << "测试 2: Point初始化测试" << std::endl;
+
+  Point<int, 3> short_point{1, 2};
+  assert(short_point[0] == 1);
+  assert(short_point[1] == 2);
+  assert(short_point[2] == 0);
+
+  bool exception_thrown = false;
+  try {
+    Point<int, 2> too_many{1, 2, 3};
+    (void)too_many;
+  } catch (const std::invalid_argument&) {
+    exception_thrown = true;
+  }
+  assert(exception_thrown);
+
+  std::cout << "  ✓ Point初始化测试通过" << std::endl;
+}
+
 void testBuildFunction() {
-  std::cout << "测试 2: 构建功能测试" << std::endl;
+  std::cout << "测试 3: 构建功能测试" << std::endl;
   KDTree<double, 2> tree;
 
   std::vector<Point<double, 2>> points = {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}, {7.0, 8.0}, {9.0, 10.0}};
@@ -59,7 +80,7 @@ void testBuildFunction() {
 }
 
 void testInsertFunction() {
-  std::cout << "测试 3: 插入功能测试" << std::endl;
+  std::cout << "测试 4: 插入功能测试" << std::endl;
   KDTree<double, 2> tree;
   assert(tree.empty());
 
@@ -80,7 +101,7 @@ void testInsertFunction() {
 }
 
 void testNearestNeighbor() {
-  std::cout << "测试 4: 最近邻搜索测试" << std::endl;
+  std::cout << "测试 5: 最近邻搜索测试" << std::endl;
   KDTree<double, 2> tree;
   std::vector<Point<double, 2>> points = {{2.0, 3.0}, {5.0, 4.0}, {9.0, 6.0},
                                            {4.0, 7.0}, {8.0, 1.0}, {7.0, 2.0}};
@@ -121,7 +142,7 @@ void testNearestNeighbor() {
 }
 
 void testRangeQuery() {
-  std::cout << "测试 5: 范围查询测试" << std::endl;
+  std::cout << "测试 6: 范围查询测试" << std::endl;
   KDTree<double, 2> tree;
   std::vector<Point<double, 2>> points = {{1.0, 1.0}, {2.0, 2.0}, {3.0, 3.0}, {4.0, 4.0},
                                            {5.0, 5.0}, {6.0, 6.0}, {7.0, 7.0}, {8.0, 8.0}};
@@ -158,7 +179,7 @@ void testRangeQuery() {
 }
 
 void testKNearestNeighbors() {
-  std::cout << "测试 6: K近邻搜索测试" << std::endl;
+  std::cout << "测试 7: K近邻搜索测试" << std::endl;
   KDTree<double, 2> tree;
   std::vector<Point<double, 2>> points = {{1.0, 1.0}, {2.0, 2.0}, {3.0, 3.0}, {4.0, 4.0},
                                            {5.0, 5.0}, {6.0, 6.0}, {7.0, 7.0}, {8.0, 8.0}};
@@ -202,7 +223,7 @@ void testKNearestNeighbors() {
 }
 
 void testEdgeCases() {
-  std::cout << "测试 7: 边界情况测试" << std::endl;
+  std::cout << "测试 8: 边界情况测试" << std::endl;
   KDTree<double, 2> tree;
   try {
     Point<double, 2> query = {1.0, 1.0};
@@ -242,7 +263,7 @@ void testEdgeCases() {
 }
 
 void testPerformance() {
-  std::cout << "测试 8: 性能测试" << std::endl;
+  std::cout << "测试 9: 性能测试" << std::endl;
   const int num_points = 10000;
   const int num_queries = 1000;
 
@@ -284,6 +305,8 @@ void testPerformance() {
 
 void runAllTests() {
   testBasicOperations();
+  std::cout << std::endl;
+  testPointInitialization();
   std::cout << std::endl;
   testBuildFunction();
   std::cout << std::endl;

@@ -1,6 +1,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdio>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -327,6 +328,25 @@ void test_simple_mc_multi_instance_isolation() {
   std::printf("[SimpleConcurrentQueue<int>] test_multi_instance_isolation passed\n");
 }
 
+void test_simple_mc_reused_storage_isolation() {
+  using Queue = simple_mc::SimpleConcurrentQueue<int>;
+  alignas(Queue) unsigned char storage[sizeof(Queue)];
+
+  Queue* q = new (storage) Queue();
+  q->enqueue(7);
+  int v = 0;
+  assert(q->dequeue(&v) && v == 7);
+  q->~Queue();
+
+  q = new (storage) Queue();
+  q->enqueue(9);
+  assert(q->dequeue(&v) && v == 9);
+  assert(!q->dequeue(&v));
+  q->~Queue();
+
+  std::printf("[SimpleConcurrentQueue<int>] test_reused_storage_isolation passed\n");
+}
+
 void test_dvyukov_bounded_full_empty_behavior() {
   dvyukov::mpmc_bounded_queue<int> q(8);
 
@@ -355,6 +375,7 @@ int main() {
 
   test_simple_mc_template_type_support();
   test_simple_mc_multi_instance_isolation();
+  test_simple_mc_reused_storage_isolation();
   test_dvyukov_bounded_full_empty_behavior();
 
   std::printf("All tests passed!\n");
