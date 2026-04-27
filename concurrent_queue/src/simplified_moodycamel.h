@@ -143,7 +143,10 @@ template <typename T> struct ProducerSubQueue {
 
 template <typename T = int> class SimpleConcurrentQueue {
 public:
-  SimpleConcurrentQueue() : producer_list_head_(nullptr), producer_count_(0) {}
+  SimpleConcurrentQueue()
+      : producer_list_head_(nullptr), producer_count_(0),
+        instance_id_(next_instance_id_.fetch_add(1,
+                                                 std::memory_order_relaxed)) {}
 
   ~SimpleConcurrentQueue() {
     ProducerSubQueue<T> *p =
@@ -152,6 +155,11 @@ public:
       ProducerSubQueue<T> *n = p->next_producer.load(std::memory_order_relaxed);
       delete p;
       p = n;
+    }
+    if (my_producer_owner_ == this && my_producer_owner_id_ == instance_id_) {
+      my_producer_ = nullptr;
+      my_producer_owner_ = nullptr;
+      my_producer_owner_id_ = 0;
     }
   }
 
@@ -192,9 +200,11 @@ public:
     thread_local ProducerSubQueue<T> *cached_producers[SC_MAX_PRODUCERS];
     thread_local int cached_count = 0;
     thread_local const SimpleConcurrentQueue *cached_queue = nullptr;
+    thread_local uint64_t cached_queue_id = 0;
     thread_local uint32_t rr = 0;
 
-    if (cached_queue != this || cached_count != count) {
+    if (cached_queue != this || cached_queue_id != instance_id_ ||
+        cached_count != count) {
       cached_count = 0;
       for (auto *cur = producer_list_head_.load(std::memory_order_acquire);
            cur && cached_count < SC_MAX_PRODUCERS;
@@ -202,6 +212,7 @@ public:
         cached_producers[cached_count++] = cur;
       }
       cached_queue = this;
+      cached_queue_id = instance_id_;
     }
 
     uint32_t start = rr++;
@@ -219,20 +230,33 @@ public:
 private:
   alignas(SC_CACHE_LINE) std::atomic<ProducerSubQueue<T> *> producer_list_head_;
   alignas(SC_CACHE_LINE) std::atomic<int> producer_count_;
+  const uint64_t instance_id_;
 
+  static inline std::atomic<uint64_t> next_instance_id_{1};
   static inline thread_local ProducerSubQueue<T> *my_producer_ = nullptr;
   static inline thread_local const SimpleConcurrentQueue *my_producer_owner_ =
       nullptr;
+  static inline thread_local uint64_t my_producer_owner_id_ = 0;
 
   ProducerSubQueue<T> *get_or_create_producer() {
-    if (my_producer_ && my_producer_owner_ == this)
+    if (my_producer_ && my_producer_owner_ == this &&
+        my_producer_owner_id_ == instance_id_) {
       return my_producer_;
-
-    if (producer_count_.load(std::memory_order_relaxed) >= SC_MAX_PRODUCERS) {
-      throw std::runtime_error("SimpleConcurrentQueue: too many producers");
     }
 
     auto *p = new ProducerSubQueue<T>();
+    int count = producer_count_.load(std::memory_order_relaxed);
+    while (true) {
+      if (count >= static_cast<int>(SC_MAX_PRODUCERS)) {
+        delete p;
+        throw std::runtime_error("SimpleConcurrentQueue: too many producers");
+      }
+      if (producer_count_.compare_exchange_weak(
+              count, count + 1, std::memory_order_acq_rel,
+              std::memory_order_relaxed)) {
+        break;
+      }
+    }
 
     ProducerSubQueue<T> *head =
         producer_list_head_.load(std::memory_order_relaxed);
@@ -241,9 +265,9 @@ private:
     } while (!producer_list_head_.compare_exchange_weak(
         head, p, std::memory_order_release, std::memory_order_relaxed));
 
-    producer_count_.fetch_add(1, std::memory_order_release);
     my_producer_ = p;
     my_producer_owner_ = this;
+    my_producer_owner_id_ = instance_id_;
     return p;
   }
 

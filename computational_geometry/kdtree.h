@@ -19,6 +19,10 @@ struct Point {
   Point() { std::fill(coords, coords + K, T{}); }
 
   Point(std::initializer_list<T> init) {
+    if (init.size() > static_cast<size_t>(K)) {
+      throw std::invalid_argument("too many coordinates for KDTree point");
+    }
+    std::fill(coords, coords + K, T{});
     std::copy(init.begin(), init.end(), coords);
   }
 

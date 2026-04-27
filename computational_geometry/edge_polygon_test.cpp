@@ -109,6 +109,7 @@ void TestPolygon() {
 
   AssertTrue(rect.IsValid(), "矩形有效");
   AssertEqual(rect.VertexCount(), 4, "矩形顶点数");
+  AssertEqual(Area(rect_points), 2.0, 1e-9, "逆时针多边形面积");
   AssertEqual(rect.GetArea(), 2.0, 1e-9, "矩形面积");
   AssertEqual(rect.GetPerimeter(), 6.0, 1e-9, "矩形周长");
 
@@ -122,6 +123,11 @@ void TestPolygon() {
   AssertTrue(triangle.IsValid(), "三角形有效");
   AssertEqual(triangle.GetArea(), 6.0, 1e-9, "三角形面积");
   AssertEqual(triangle.GetPerimeter(), 12.0, 1e-9, "三角形周长");
+
+  vector<Point> clockwise_rect_points = {{0, 0}, {0, 1}, {2, 1}, {2, 0}};
+  Polygon clockwise_rect(clockwise_rect_points);
+  AssertEqual(Area(clockwise_rect_points), 2.0, 1e-9, "顺时针多边形面积");
+  AssertEqual(clockwise_rect.GetArea(), 2.0, 1e-9, "顺时针Polygon面积");
 
   vector<Point> invalid_points = {{0, 0}, {1, 1}};
   Polygon invalid(invalid_points);

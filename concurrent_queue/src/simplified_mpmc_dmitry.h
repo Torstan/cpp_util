@@ -168,8 +168,8 @@ private:
     return round_up_power_of_two(per_shard);
   }
 
-  const size_t shard_capacity_;
   const size_t shard_mask_;
+  const size_t shard_capacity_;
   // Cold members: shard selection is cached in thread_local state, so these are
   // not per-operation hotspots and do not need cache-line padding.
   std::vector<std::unique_ptr<detail::bounded_queue_core<T>>> shards_;
