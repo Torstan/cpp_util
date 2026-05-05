@@ -22,8 +22,8 @@ struct Point {
     if (init.size() > static_cast<size_t>(K)) {
       throw std::invalid_argument("too many coordinates for KDTree point");
     }
-    std::fill(coords, coords + K, T{});
     std::copy(init.begin(), init.end(), coords);
+    std::fill(coords + init.size(), coords + K, T{});
   }
 
   T operator[](int index) const { return coords[index]; }

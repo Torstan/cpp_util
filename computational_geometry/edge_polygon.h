@@ -198,27 +198,13 @@ inline double SignedArea(const std::vector<Point>& polygon) {
   double area = 0.0;
   for (size_t i = 0; i < n; ++i) {
     const size_t j = (i + 1) % n;
-    area += polygon[i].X() * polygon[j].Y() - polygon[j].X() * polygon[i].Y();
+    area += polygon[i].Cross(polygon[j]);
   }
   return area * 0.5;
 }
 
 inline double Area(const std::vector<Point>& polygon) {
   return std::abs(SignedArea(polygon));
-}
-
-inline double AreaSimple(const std::vector<Point>& polygon) {
-  const size_t n = polygon.size();
-  if (n < 3) {
-    return 0.0;
-  }
-
-  double area = 0.0;
-  for (size_t i = 0; i < n; ++i) {
-    const size_t j = (i + 1) % n;
-    area += polygon[i].X() * polygon[j].Y() - polygon[j].X() * polygon[i].Y();
-  }
-  return std::abs(area) * 0.5;
 }
 
 class Polygon {

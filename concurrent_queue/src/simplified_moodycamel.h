@@ -244,11 +244,9 @@ private:
       return my_producer_;
     }
 
-    auto *p = new ProducerSubQueue<T>();
     int count = producer_count_.load(std::memory_order_relaxed);
     while (true) {
       if (count >= static_cast<int>(SC_MAX_PRODUCERS)) {
-        delete p;
         throw std::runtime_error("SimpleConcurrentQueue: too many producers");
       }
       if (producer_count_.compare_exchange_weak(
@@ -258,6 +256,7 @@ private:
       }
     }
 
+    auto *p = new ProducerSubQueue<T>();
     ProducerSubQueue<T> *head =
         producer_list_head_.load(std::memory_order_relaxed);
     do {
