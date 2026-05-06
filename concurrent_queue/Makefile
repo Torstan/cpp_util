@@ -88,7 +88,7 @@ $(OUT_DIR)/bench_ubsan_%: $(SRC) | $(OUT_DIR)
 run: all
 	@printf "\n%-8s %-20s %9s %9s %9s %10s %14s %6s\n" \
 		"Scene" "Queue" "Real(ms)" "User(ms)" "Sys(ms)" "RSS(KB)" "Ops/sec" "Check"
-	@printf "%-8s %-20s %9s %9s %9s %10s %14s %6s\n" \
+	@printf "%-8s %-21s %9s %9s %9s %10s %14s %6s\n" \
 		"------" "--------------------" "--------" "--------" "--------" "---------" "-------------" "-----"
 	@for scenario in $(SCENARIOS); do \
 		np=$${scenario%%:*}; \
@@ -102,7 +102,7 @@ run: all
 				exit $$status; \
 			fi; \
 			IFS=$$'\t' read -r name wall user sys rss ops ok <<< "$$result"; \
-			printf "%-8s %-20s %9s %9s %9s %10s %14s %6s\n" \
+			printf "%-8s %-21s %9s %9s %9s %10s %14s %6s\n" \
 				"$$label" "$$name" "$$wall" "$$user" "$$sys" "$$rss" "$$ops" "$$ok"; \
 		done; \
 		echo ""; \
