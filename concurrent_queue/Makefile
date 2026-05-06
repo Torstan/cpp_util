@@ -93,7 +93,7 @@ run: all
 		rest=$${scenario#*:}; \
 		nc=$${rest%%:*}; \
 		label=$${rest#*:}; \
-		for q in $(QUEUES); do \
+		for q in $(DEFAULT_QUEUES); do \
 			result=$$(./$(OUT_DIR)/bench_$$q -p $$np -c $$nc -n $(ITEMS) -r $(ROUNDS)); \
 			IFS=$$'\t' read -r name wall user sys rss ops ok <<< "$$result"; \
 			printf "%-8s %-20s %9s %9s %9s %10s %14s %6s\n" \
