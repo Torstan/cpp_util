@@ -33,23 +33,22 @@ struct BenchQueue {
 
 #include "concurrent_queue/two_lock_queue.h"
 struct BenchQueue {
-  queue_t q_;
-  void init() { initialize(&q_, 0); }
-  void enqueue(int v) { ::enqueue(&q_, v); }
-  bool dequeue(int *v) { return ::dequeue(&q_, v); }
-  static const char* name() { return "Two-Lock Queue"; }
+  concurrent_queue::TwoLockQueue q_;
+  void init() {}
+  void enqueue(int v) { q_.Enqueue(v); }
+  bool dequeue(int *v) { return q_.Dequeue(v); }
+  static const char* name() { return "TwoLockQueue"; }
 };
 
 #elif defined(USE_CAS_LF)
 
 #include "concurrent_queue/lock_free_queue.h"
 struct BenchQueue {
-  queue_t q_;
-  void init() { initialize(&q_, 0); }
-  ~BenchQueue() { destroy(&q_); }
-  void enqueue(int v) { ::enqueue(&q_, v); }
-  bool dequeue(int *v) { return ::dequeue(&q_, v); }
-  static const char* name() { return "CAS Lock-Free"; }
+  concurrent_queue::LockFreeQueue q_;
+  void init() {}
+  void enqueue(int v) { q_.Enqueue(v); }
+  bool dequeue(int *v) { return q_.Dequeue(v); }
+  static const char* name() { return "LockFreeQueue"; }
 };
 
 #elif defined(USE_DVYUKOV_MPMC)
