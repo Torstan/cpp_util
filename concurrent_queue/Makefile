@@ -11,6 +11,7 @@ TEST_SRC := tests/test_queues.cpp
 TSAN_TEST_SRC := tests/test_simple_concurrent_queue_tsan.cpp
 OUT_DIR := build
 DEP_DIR := $(OUT_DIR)/deps
+RUN_STAGE_DIR := $(OUT_DIR)/run_stage
 TEST_BIN := $(OUT_DIR)/test_lock_free_queue
 TSAN_TEST_BIN := $(OUT_DIR)/test_simple_concurrent_queue_tsan
 TSAN_BENCH_BINS = $(addprefix $(OUT_DIR)/bench_tsan_,$(QUEUES))
@@ -34,6 +35,7 @@ UBSAN_BENCH_LDLIBS ?= -fsanitize=undefined -latomic
 UBSAN_BENCH_ARGS ?= -p 4 -c 4 -n 50000 -r 1
 SAN_TBB_EXTRA_LDLIBS ?= -ltbb
 SAN_CLEAN_ENV ?= env -u LD_LIBRARY_PATH -u LD_PRELOAD -u TSAN_OPTIONS -u ASAN_OPTIONS -u UBSAN_OPTIONS
+RUN_STAGED := bash scripts/run_staged_binary.sh $(RUN_STAGE_DIR)
 
 DEFAULT_QUEUES := mutex_queue two_lock_queue lock_free_queue vyukov_bounded_queue sharded_vyukov_queue moodycamel simple_concurrent_queue
 OPTIONAL_QUEUES := tbb
@@ -94,7 +96,11 @@ run: all
 		nc=$${rest%%:*}; \
 		label=$${rest#*:}; \
 		for q in $(DEFAULT_QUEUES); do \
-			result=$$(./$(OUT_DIR)/bench_$$q -p $$np -c $$nc -n $(ITEMS) -r $(ROUNDS)); \
+			status=0; \
+			result=$$($(RUN_STAGED) ./$(OUT_DIR)/bench_$$q -p $$np -c $$nc -n $(ITEMS) -r $(ROUNDS)) || status=$$?; \
+			if [ $$status -ne 0 ]; then \
+				exit $$status; \
+			fi; \
 			IFS=$$'\t' read -r name wall user sys rss ops ok <<< "$$result"; \
 			printf "%-8s %-20s %9s %9s %9s %10s %14s %6s\n" \
 				"$$label" "$$name" "$$wall" "$$user" "$$sys" "$$rss" "$$ops" "$$ok"; \
@@ -103,7 +109,7 @@ run: all
 	done
 
 run-%: $(OUT_DIR)/bench_%
-	$< $(SCENARIO_ARGS)
+	@$(RUN_STAGED) $< $(SCENARIO_ARGS)
 
 list:
 	@printf '%s\n' $(QUEUES)
@@ -112,19 +118,19 @@ $(TEST_BIN): $(TEST_SRC) | $(OUT_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(TEST_LDLIBS)
 
 test: $(TEST_BIN)
-	$<
+	@$(RUN_STAGED) $<
 
 $(TSAN_TEST_BIN): $(TSAN_TEST_SRC) | $(OUT_DIR)
 	$(CXX) $(CPPFLAGS) $(TSAN_CXXFLAGS) -o $@ $< $(LDFLAGS) $(TSAN_LDLIBS)
 
 test-tsan: $(TSAN_TEST_BIN)
-	TSAN_OPTIONS="halt_on_error=1" $<
+	@$(SAN_CLEAN_ENV) TSAN_OPTIONS="halt_on_error=1" $(RUN_STAGED) $<
 
 test-tsan-bench: $(TSAN_BENCH_BINS)
 	@failed=0; \
 	for q in $(QUEUES); do \
 		echo "== TSAN bench: $$q =="; \
-		if $(SAN_CLEAN_ENV) TSAN_OPTIONS="halt_on_error=1" ./$(OUT_DIR)/bench_tsan_$$q $(TSAN_BENCH_ARGS); then \
+		if $(SAN_CLEAN_ENV) TSAN_OPTIONS="halt_on_error=1" $(RUN_STAGED) ./$(OUT_DIR)/bench_tsan_$$q $(TSAN_BENCH_ARGS); then \
 			echo "[PASS] $$q"; \
 		else \
 			if echo " $(TSAN_ALLOW_FAIL_QUEUES) " | grep -q " $$q "; then \
@@ -151,7 +157,7 @@ test-asan-bench: $(ASAN_BENCH_BINS)
 		if $(SAN_CLEAN_ENV) \
 		   LD_PRELOAD="$(ASAN_RUNTIME_LIB)" \
 		   ASAN_OPTIONS="$(ASAN_OPTIONS_BENCH)" \
-		   ./$(OUT_DIR)/bench_asan_$$q $(ASAN_BENCH_ARGS); then \
+		   $(RUN_STAGED) ./$(OUT_DIR)/bench_asan_$$q $(ASAN_BENCH_ARGS); then \
 			echo "[PASS] $$q"; \
 		else \
 			echo "[FAIL] $$q"; \
@@ -167,7 +173,7 @@ test-ubsan-bench: $(UBSAN_BENCH_BINS)
 	@failed=0; \
 	for q in $(QUEUES); do \
 		echo "== UBSAN bench: $$q =="; \
-		if $(SAN_CLEAN_ENV) UBSAN_OPTIONS="halt_on_error=1" ./$(OUT_DIR)/bench_ubsan_$$q $(UBSAN_BENCH_ARGS); then \
+		if $(SAN_CLEAN_ENV) UBSAN_OPTIONS="halt_on_error=1" $(RUN_STAGED) ./$(OUT_DIR)/bench_ubsan_$$q $(UBSAN_BENCH_ARGS); then \
 			echo "[PASS] $$q"; \
 		else \
 			echo "[FAIL] $$q"; \
@@ -185,6 +191,14 @@ test-sanitize-all:
 	$(MAKE) test-ubsan-bench
 
 clean:
-	rm -rf $(OUT_DIR)
+	@for attempt in 1 2 3 4 5; do \
+		rm -rf $(OUT_DIR); \
+		if [ ! -e $(OUT_DIR) ]; then \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "Failed to remove $(OUT_DIR) after multiple attempts."; \
+	exit 1
 
 -include $(DEPS)
