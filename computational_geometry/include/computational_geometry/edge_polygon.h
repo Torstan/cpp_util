@@ -3,6 +3,8 @@
 
 #include "computational_geometry/point_circle.h"
 
+namespace computational_geometry {
+
 struct Interval {
   int start;
   int end;
@@ -22,26 +24,26 @@ struct Interval {
   }
 };
 
-inline Position PointToEdgePosition(const Point& start, const Point& end, const Point& c) {
+inline Position PointSegmentPosition(const Point& start, const Point& end, const Point& c) {
   const double cross_product = (end - start).Cross(c - start);
-  const int sign = DCmp(cross_product);
+  const int sign = CompareDouble(cross_product);
   if (sign > 0) {
     return kLeft;
   }
   if (sign < 0) {
     return kRight;
   }
-  return kOnEdge;
+  return kOnSegment;
 }
 
-class Edge {
+class Segment {
  private:
   Point start_;
   Point end_;
   mutable double length_cached_ = -1.0;
 
  public:
-  Edge(const Point& s, const Point& e) : start_(s), end_(e) {}
+  Segment(const Point& s, const Point& e) : start_(s), end_(e) {}
 
   bool Contains(const Point& point) const {
     if (!Collinear(start_, end_, point)) {
@@ -66,13 +68,13 @@ class Edge {
 
   double Length() const {
     if (length_cached_ < 0) {
-      length_cached_ = (end_ - start_).Len();
+      length_cached_ = (end_ - start_).Length();
     }
     return length_cached_;
   }
 
   double LengthSquared() const {
-    return (end_ - start_).LenSquared();
+    return (end_ - start_).LengthSquared();
   }
 
   const Point& Start() const { return start_; }
@@ -82,16 +84,16 @@ class Edge {
     return (start_ + end_) * 0.5;
   }
 
-  double PointToLineDistance(const Point& point) const {
+  double DistanceToLine(const Point& point) const {
     const double area = std::abs((point - start_).Cross(end_ - start_));
     const double len = Length();
     if (IsZero(len)) {
-      throw GeometryException("Edge has zero length");
+      throw GeometryException("Segment has zero length");
     }
     return area / len;
   }
 
-  double PointToEdgeDistance(const Point& point) const {
+  double DistanceToPoint(const Point& point) const {
     const Point vec_se = end_ - start_;
     const Point vec_sp = point - start_;
     const Point vec_ep = point - end_;
@@ -100,16 +102,16 @@ class Edge {
     const double dot_se_ep = vec_se.Dot(vec_ep);
 
     if (dot_se_sp <= 0) {
-      return vec_sp.Len();
+      return vec_sp.Length();
     }
     if (dot_se_ep >= 0) {
-      return vec_ep.Len();
+      return vec_ep.Length();
     }
 
-    return PointToLineDistance(point);
+    return DistanceToLine(point);
   }
 
-  bool Intersects(const Edge& other) const {
+  bool Intersects(const Segment& other) const {
     const Interval this_x(std::min(start_.X(), end_.X()), std::max(start_.X(), end_.X()));
     const Interval this_y(std::min(start_.Y(), end_.Y()), std::max(start_.Y(), end_.Y()));
     const Interval other_x(std::min(other.start_.X(), other.end_.X()),
@@ -123,7 +125,7 @@ class Edge {
 
     auto orientation = [](const Point& a, const Point& b, const Point& c) -> int {
       const double val = (b.Y() - a.Y()) * (c.X() - b.X()) - (b.X() - a.X()) * (c.Y() - b.Y());
-      return DCmp(val);
+      return CompareDouble(val);
     };
 
     const int o1 = orientation(start_, end_, other.start_);
@@ -160,7 +162,7 @@ inline std::vector<Point> ConvexHull(std::vector<Point>& points) {
   hull.reserve(points.size());
   for (const auto& point : points) {
     while (hull.size() >= 2) {
-      const Position pos = PointToEdgePosition(hull[hull.size() - 2], hull[hull.size() - 1], point);
+      const Position pos = PointSegmentPosition(hull[hull.size() - 2], hull[hull.size() - 1], point);
       if (pos != kRight) {
         hull.pop_back();
       } else {
@@ -173,7 +175,7 @@ inline std::vector<Point> ConvexHull(std::vector<Point>& points) {
   const size_t upper_size = hull.size();
   for (auto it = points.rbegin() + 1; it != points.rend(); ++it) {
     while (hull.size() > upper_size) {
-      const Position pos = PointToEdgePosition(hull[hull.size() - 2], hull[hull.size() - 1], *it);
+      const Position pos = PointSegmentPosition(hull[hull.size() - 2], hull[hull.size() - 1], *it);
       if (pos != kRight) {
         hull.pop_back();
       } else {
@@ -224,17 +226,17 @@ class Polygon {
 
   bool IsValid() const { return vertices_.size() >= 3; }
   size_t VertexCount() const { return vertices_.size(); }
-  const std::vector<Point>& GetVertices() const { return vertices_; }
+  const std::vector<Point>& Vertices() const { return vertices_; }
 
-  double GetArea() const {
+  double Area() const {
     if (!area_valid_) {
-      area_cached_ = Area(vertices_);
+      area_cached_ = computational_geometry::Area(vertices_);
       area_valid_ = true;
     }
     return area_cached_;
   }
 
-  double GetPerimeter() const {
+  double Perimeter() const {
     if (vertices_.size() < 2) {
       return 0.0;
     }
@@ -253,7 +255,7 @@ class Polygon {
 
     for (size_t i = 0; i < vertices_.size(); ++i) {
       const size_t next = (i + 1) % vertices_.size();
-      if (Edge(vertices_[i], vertices_[next]).Contains(point)) {
+      if (Segment(vertices_[i], vertices_[next]).Contains(point)) {
         return true;
       }
     }
@@ -272,5 +274,7 @@ class Polygon {
     return inside;
   }
 };
+
+}  // namespace computational_geometry
 
 #endif  // COMPUTATIONAL_GEOMETRY_EDGE_POLYGON_H_

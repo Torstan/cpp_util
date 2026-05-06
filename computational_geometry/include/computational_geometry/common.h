@@ -12,46 +12,41 @@
 #include <string>
 #include <vector>
 
-namespace GeometryConfig {
+namespace computational_geometry {
+
+namespace config {
 inline double kEpsilon = 1e-9;
 inline constexpr double kPi = 3.14159265358979323846;
 
-inline void SetEpsilon(double eps) {
-  kEpsilon = eps;
-}
+inline void SetEpsilon(double eps) { kEpsilon = eps; }
 
-inline double GetEpsilon() {
-  return kEpsilon;
-}
-}  // namespace GeometryConfig
+inline double GetEpsilon() { return kEpsilon; }
+}  // namespace config
 
 class GeometryException : public std::runtime_error {
  public:
   explicit GeometryException(const std::string& msg) : std::runtime_error(msg) {}
 };
 
-inline int DCmp(double a, double b = 0.0) {
+inline int CompareDouble(double a, double b = 0.0) {
   const double diff = a - b;
-  if (std::abs(diff) < GeometryConfig::kEpsilon) {
+  if (std::abs(diff) < config::kEpsilon) {
     return 0;
   }
   return diff > 0 ? 1 : -1;
 }
 
 inline bool IsZero(double a) {
-  return std::abs(a) < GeometryConfig::kEpsilon;
+  return std::abs(a) < config::kEpsilon;
 }
 
 enum Position {
-  kOnEdge = 0,
+  kOnSegment = 0,
   kLeft = 1,
   kRight = 2
 };
 
 class PerformanceTimer {
- private:
-  std::chrono::high_resolution_clock::time_point start_time_;
-
  public:
   void Start() {
     start_time_ = std::chrono::high_resolution_clock::now();
@@ -63,6 +58,11 @@ class PerformanceTimer {
         std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_);
     return duration.count() / 1000.0;
   }
+
+ private:
+  std::chrono::high_resolution_clock::time_point start_time_;
 };
+
+}  // namespace computational_geometry
 
 #endif  // COMPUTATIONAL_GEOMETRY_COMMON_H_

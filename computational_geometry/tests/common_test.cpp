@@ -9,31 +9,33 @@
 #include "computational_geometry/point_circle.h"
 #include "test_utils.h"
 
+namespace cg = computational_geometry;
+
 using namespace std;
 
 void TestCommon() {
   cout << "\n=== 测试common模块 ===" << endl;
 
-  double old_epsilon = GeometryConfig::GetEpsilon();
-  GeometryConfig::SetEpsilon(1e-6);
-  AssertEqual(GeometryConfig::GetEpsilon(), 1e-6, 1e-9, "EPSILON设置");
-  GeometryConfig::SetEpsilon(old_epsilon);
+  double old_epsilon = cg::config::GetEpsilon();
+  cg::config::SetEpsilon(1e-6);
+  AssertEqual(cg::config::GetEpsilon(), 1e-6, 1e-9, "EPSILON设置");
+  cg::config::SetEpsilon(old_epsilon);
 
-  PerformanceTimer timer;
+  cg::PerformanceTimer timer;
   timer.Start();
   volatile double sink = 0.0;
   for (int i = 0; i < 1000; ++i) {
     sink += std::sin(i * 0.01);
   }
   (void)sink;
-  AssertTrue(timer.ElapsedMs() >= 0.0, "PerformanceTimer可用");
+  AssertTrue(timer.ElapsedMs() >= 0.0, "cg::PerformanceTimer可用");
 }
 
 void PerformanceTest() {
   cout << "\n=== 性能测试 ===" << endl;
 
   const int N = 1000;
-  vector<Point> points;
+  vector<cg::Point> points;
   points.reserve(N);
 
   for (int i = 0; i < N; ++i) {
@@ -42,7 +44,7 @@ void PerformanceTest() {
 
   auto hull_input = points;
   auto start_time = chrono::high_resolution_clock::now();
-  auto hull = ConvexHull(hull_input);
+  auto hull = cg::ConvexHull(hull_input);
   auto end_time = chrono::high_resolution_clock::now();
   auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
 
@@ -50,8 +52,8 @@ void PerformanceTest() {
   cout << "凸包点数: " << hull.size() << endl;
 
   start_time = chrono::high_resolution_clock::now();
-  Circle circle;
-  bool result = FindMinDisc(points, circle);
+  cg::Circle circle;
+  bool result = cg::FindMinimumEnclosingCircle(points, circle);
   end_time = chrono::high_resolution_clock::now();
   duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
 
