@@ -5,26 +5,26 @@ tests, and benchmark drivers.
 
 ## Layout
 
-- `src/two_mutex.h`
+- `include/concurrent_queue/two_lock_queue.h`
   - Two-lock queue based on separate head/tail mutexes.
-- `src/one_queue_with_cas.h`
+- `include/concurrent_queue/lock_free_queue.h`
   - CAS-based Michael-Scott style linked queue.
   - Node reclamation is deferred until `destroy()` to avoid concurrent
     use-after-free.
-- `src/mpmc_dmitry.h`
+- `include/concurrent_queue/vyukov_bounded_queue.h`
   - Baseline bounded MPMC queue from Dmitry Vyukov.
   - Single global `enqueue_pos_` and `dequeue_pos_`.
-- `src/simplified_mpmc_dmitry.h`
+- `include/concurrent_queue/sharded_vyukov_queue.h`
   - Sharded wrapper around a simplified inlined Vyukov bounded queue core.
   - Default shard count is `16`.
-  - Does not depend on `mpmc_dmitry.h`.
-- `src/moodycamel.h`
+  - Does not depend on `include/concurrent_queue/vyukov_bounded_queue.h`.
+- `include/concurrent_queue/moodycamel.h`
   - Original Moodycamel lock-free MPMC queue.
-- `src/simplified_moodycamel.h`
+- `include/concurrent_queue/simple_concurrent_queue.h`
   - Simplified Moodycamel-style MPMC queue with per-producer sub-queues.
-- `test/test_lock_free_queue.cpp`
+- `tests/test_queues.cpp`
   - Functional regression tests.
-- `test/bench_queues.cpp`
+- `benchmarks/bench_queues.cpp`
   - Benchmark entry used by `Makefile`.
 
 ## Algorithm Notes
@@ -103,7 +103,7 @@ Parameters:
 ## Performance Data
 
 The following numbers were measured locally on `2026-03-28` with the latest
-code by running `test/run_bench.sh` (`make run`) in the current workspace
+code by running `benchmarks/run_bench.sh` (`make run`) in the current workspace
 environment, with:
 
 - build flags: `-std=c++17 -O2 -mcx16 -pthread`
