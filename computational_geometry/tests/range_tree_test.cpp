@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 
-#include "range_tree.h"
+#include "computational_geometry/range_tree.h"
 #include "test_utils.h"
 
 using namespace std;

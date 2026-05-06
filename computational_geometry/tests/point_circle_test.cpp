@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 
-#include "point_circle.h"
+#include "computational_geometry/point_circle.h"
 #include "test_utils.h"
 
 using namespace std;

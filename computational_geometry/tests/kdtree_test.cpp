@@ -6,7 +6,7 @@
 #include <random>
 #include <vector>
 
-#include "kdtree.h"
+#include "computational_geometry/kdtree.h"
 
 void testBasicOperations();
 void testPointInitialization();

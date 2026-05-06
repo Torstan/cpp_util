@@ -1,7 +1,7 @@
 #ifndef COMPUTATIONAL_GEOMETRY_POINT_CIRCLE_H_
 #define COMPUTATIONAL_GEOMETRY_POINT_CIRCLE_H_
 
-#include "common.h"
+#include "computational_geometry/common.h"
 
 struct Point {
   double x;

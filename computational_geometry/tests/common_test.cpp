@@ -4,9 +4,9 @@
 #include <random>
 #include <vector>
 
-#include "common.h"
-#include "edge_polygon.h"
-#include "point_circle.h"
+#include "computational_geometry/common.h"
+#include "computational_geometry/edge_polygon.h"
+#include "computational_geometry/point_circle.h"
 #include "test_utils.h"
 
 using namespace std;

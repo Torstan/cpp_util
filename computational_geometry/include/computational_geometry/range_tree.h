@@ -1,7 +1,7 @@
 #ifndef COMPUTATIONAL_GEOMETRY_RANGE_TREE_H_
 #define COMPUTATIONAL_GEOMETRY_RANGE_TREE_H_
 
-#include "edge_polygon.h"
+#include "computational_geometry/edge_polygon.h"
 
 class RangeTree {
  private:
