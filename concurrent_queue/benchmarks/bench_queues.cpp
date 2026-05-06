@@ -72,6 +72,9 @@ struct BenchQueue {
 #elif defined(USE_DVYUKOV_MPMC_SHARDED)
 
 #include "concurrent_queue/sharded_vyukov_queue.h"
+#if defined(DVYUKOV_SHARD_COUNT) && !defined(VYUKOV_SHARD_COUNT)
+#define VYUKOV_SHARD_COUNT DVYUKOV_SHARD_COUNT
+#endif
 #ifndef VYUKOV_SHARD_COUNT
 #define VYUKOV_SHARD_COUNT 16
 #endif
