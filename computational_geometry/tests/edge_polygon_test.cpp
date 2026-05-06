@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 
-#include "edge_polygon.h"
+#include "computational_geometry/edge_polygon.h"
 #include "test_utils.h"
 
 using namespace std;

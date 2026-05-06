@@ -1,7 +1,7 @@
 #ifndef COMPUTATIONAL_GEOMETRY_EDGE_POLYGON_H_
 #define COMPUTATIONAL_GEOMETRY_EDGE_POLYGON_H_
 
-#include "point_circle.h"
+#include "computational_geometry/point_circle.h"
 
 struct Interval {
   int start;
