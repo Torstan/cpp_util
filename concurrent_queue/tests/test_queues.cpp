@@ -18,7 +18,7 @@
 #define enqueue two_lock_enqueue
 #define dequeue two_lock_dequeue
 #define LFQ_CACHE_LINE TWO_LOCK_LFQ_CACHE_LINE
-#include "two_mutex.h"
+#include "concurrent_queue/two_lock_queue.h"
 #undef LFQ_CACHE_LINE
 #undef dequeue
 #undef enqueue
@@ -30,10 +30,10 @@
 #undef mutex_t
 #undef data_t
 
-#include "one_queue_with_cas.h"
-#include "simplified_mpmc_dmitry.h"
-#include "mpmc_dmitry.h"
-#include "simplified_moodycamel.h"
+#include "concurrent_queue/lock_free_queue.h"
+#include "concurrent_queue/sharded_vyukov_queue.h"
+#include "concurrent_queue/vyukov_bounded_queue.h"
+#include "concurrent_queue/simple_concurrent_queue.h"
 
 namespace {
 

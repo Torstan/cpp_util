@@ -2,13 +2,13 @@ SHELL := /bin/bash
 
 CXX ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -mcx16 -pthread
-CPPFLAGS ?= -I../.. -Isrc
+CPPFLAGS ?= -Iinclude
 LDFLAGS ?=
 LDLIBS ?= -latomic -ltbb
 
-SRC := test/bench_queues.cpp
-TEST_SRC := test/test_lock_free_queue.cpp
-TSAN_TEST_SRC := test/test_simple_mc_tsan.cpp
+SRC := benchmarks/bench_queues.cpp
+TEST_SRC := tests/test_queues.cpp
+TSAN_TEST_SRC := tests/test_simple_concurrent_queue_tsan.cpp
 OUT_DIR := build
 DEP_DIR := $(OUT_DIR)/deps
 TEST_BIN := $(OUT_DIR)/test_lock_free_queue
