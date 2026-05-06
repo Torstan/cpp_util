@@ -16,6 +16,7 @@ LINT_CPP_SRCS := $(SRC) $(TEST_SRC) $(TSAN_TEST_SRC)
 LINT_DIRS := include tests benchmarks
 LINT_BENCH_DEF ?= -DUSE_MUTEX_QUEUE
 CLANG_TIDY ?= bash ../scripts/run_clang_tidy_errors.sh
+CLANG_TIDY_FLAGS ?= --warnings-as-errors=clang-analyzer-core.StackAddressEscape
 CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
 CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem --suppress=ctuOneDefinitionRuleViolation:benchmarks/bench_queues.cpp
 TEST_BIN := $(OUT_DIR)/test_lock_free_queue
@@ -128,7 +129,7 @@ test: $(TEST_BIN)
 
 lint:
 	@if command -v clang-tidy >/dev/null 2>&1; then \
-		$(CLANG_TIDY) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS) $(LINT_BENCH_DEF); \
+		$(CLANG_TIDY) $(CLANG_TIDY_FLAGS) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS) $(LINT_BENCH_DEF); \
 	else \
 		echo "clang-tidy not installed; skipping"; \
 	fi

@@ -7,6 +7,7 @@ TEST_DIR := tests
 LINT_CPP_SRCS := $(wildcard $(TEST_DIR)/*.cpp)
 LINT_DIRS := include $(TEST_DIR)
 CLANG_TIDY ?= bash ../scripts/run_clang_tidy_errors.sh
+CLANG_TIDY_FLAGS ?= --warnings-as-errors=clang-analyzer-core.StackAddressEscape
 CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
 CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem
 
@@ -48,7 +49,7 @@ test: all
 
 lint:
 	@if command -v clang-tidy >/dev/null 2>&1; then \
-		$(CLANG_TIDY) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS); \
+		$(CLANG_TIDY) $(CLANG_TIDY_FLAGS) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS); \
 	else \
 		echo "clang-tidy not installed; skipping"; \
 	fi
