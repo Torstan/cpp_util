@@ -3,6 +3,8 @@
 
 #include "computational_geometry/edge_polygon.h"
 
+namespace computational_geometry {
+
 class RangeTree {
  private:
   struct Node {
@@ -99,5 +101,7 @@ class RangeTree {
     return count(root_.get());
   }
 };
+
+}  // namespace computational_geometry
 
 #endif  // COMPUTATIONAL_GEOMETRY_RANGE_TREE_H_
