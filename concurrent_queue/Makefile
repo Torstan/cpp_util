@@ -140,7 +140,9 @@ test-tsan-bench: $(TSAN_BENCH_BINS)
 		exit 1; \
 	fi
 
-test-tsan-all: test-tsan test-tsan-bench
+test-tsan-all:
+	$(MAKE) test-tsan
+	$(MAKE) test-tsan-bench
 
 test-asan-bench: $(ASAN_BENCH_BINS)
 	@failed=0; \
@@ -177,7 +179,10 @@ test-ubsan-bench: $(UBSAN_BENCH_BINS)
 		exit 1; \
 	fi
 
-test-sanitize-all: test-tsan-all test-asan-bench test-ubsan-bench
+test-sanitize-all:
+	$(MAKE) test-tsan-all
+	$(MAKE) test-asan-bench
+	$(MAKE) test-ubsan-bench
 
 clean:
 	rm -rf $(OUT_DIR)
