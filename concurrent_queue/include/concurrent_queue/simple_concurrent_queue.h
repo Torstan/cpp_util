@@ -161,9 +161,8 @@ public:
       delete p;
       p = n;
     }
-    if (my_producer_owner_ == this && my_producer_owner_id_ == instance_id_) {
+    if (my_producer_owner_id_ == instance_id_) {
       my_producer_ = nullptr;
-      my_producer_owner_ = nullptr;
       my_producer_owner_id_ = 0;
     }
   }
@@ -206,19 +205,16 @@ public:
     thread_local detail::SimpleQueueProducer<T> *
         cached_producers[SC_MAX_PRODUCERS];
     thread_local int cached_count = 0;
-    thread_local const SimpleConcurrentQueue *cached_queue = nullptr;
     thread_local uint64_t cached_queue_id = 0;
     thread_local uint32_t rr = 0;
 
-    if (cached_queue != this || cached_queue_id != instance_id_ ||
-        cached_count != count) {
+    if (cached_queue_id != instance_id_ || cached_count != count) {
       cached_count = 0;
       for (auto *cur = producer_list_head_.load(std::memory_order_acquire);
            cur && cached_count < SC_MAX_PRODUCERS;
            cur = cur->next_producer.load(std::memory_order_relaxed)) {
         cached_producers[cached_count++] = cur;
       }
-      cached_queue = this;
       cached_queue_id = instance_id_;
     }
 
@@ -243,13 +239,10 @@ private:
   static inline std::atomic<uint64_t> next_instance_id_{1};
   static inline thread_local detail::SimpleQueueProducer<T> *my_producer_ =
       nullptr;
-  static inline thread_local const SimpleConcurrentQueue *my_producer_owner_ =
-      nullptr;
   static inline thread_local uint64_t my_producer_owner_id_ = 0;
 
   detail::SimpleQueueProducer<T> *GetOrCreateProducer() {
-    if (my_producer_ && my_producer_owner_ == this &&
-        my_producer_owner_id_ == instance_id_) {
+    if (my_producer_ && my_producer_owner_id_ == instance_id_) {
       return my_producer_;
     }
 
@@ -274,7 +267,6 @@ private:
         head, p, std::memory_order_release, std::memory_order_relaxed));
 
     my_producer_ = p;
-    my_producer_owner_ = this;
     my_producer_owner_id_ = instance_id_;
     return p;
   }

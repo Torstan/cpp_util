@@ -101,6 +101,8 @@ public:
   explicit ShardedVyukovQueue(size_t buffer_size)
       : shard_mask_(ShardCount - 1),
         capacity_per_shard_(NormalizeCapacity(buffer_size)),
+        instance_id_(next_instance_id_.fetch_add(1,
+                                                 std::memory_order_relaxed)),
         shards_(ShardCount) {
     static_assert((ShardCount >= 2) && ((ShardCount & (ShardCount - 1)) == 0),
                   "ShardCount must be a power of two and >= 2");
@@ -112,11 +114,10 @@ public:
   }
 
   bool Enqueue(const T &data) {
-    static thread_local const ShardedVyukovQueue *producer_owner =
-        nullptr;
+    static thread_local uint64_t producer_owner_id = 0;
     static thread_local size_t producer_shard = 0;
-    if (producer_owner != this) {
-      producer_owner = this;
+    if (producer_owner_id != instance_id_) {
+      producer_owner_id = instance_id_;
       producer_shard =
           next_producer_shard_.fetch_add(1, std::memory_order_relaxed) &
           shard_mask_;
@@ -132,11 +133,10 @@ public:
   }
 
   bool Dequeue(T &data) {
-    static thread_local const ShardedVyukovQueue *consumer_owner =
-        nullptr;
+    static thread_local uint64_t consumer_owner_id = 0;
     static thread_local size_t consumer_next_shard = 0;
-    if (consumer_owner != this) {
-      consumer_owner = this;
+    if (consumer_owner_id != instance_id_) {
+      consumer_owner_id = instance_id_;
       consumer_next_shard =
           next_consumer_shard_.fetch_add(1, std::memory_order_relaxed) &
           shard_mask_;
@@ -170,6 +170,8 @@ private:
 
   const size_t shard_mask_;
   const size_t capacity_per_shard_;
+  const uint64_t instance_id_;
+  static inline std::atomic<uint64_t> next_instance_id_{1};
   // Cold members: shard selection is cached in thread_local state, so these are
   // not per-operation hotspots and do not need cache-line padding.
   std::vector<std::unique_ptr<detail::VyukovBoundedQueueCore<T>>> shards_;
