@@ -31,7 +31,7 @@ struct BenchQueue {
 
 #elif defined(USE_TWO_LOCK)
 
-#include "two_mutex.h"
+#include "concurrent_queue/two_lock_queue.h"
 struct BenchQueue {
   queue_t q_;
   void init() { initialize(&q_, 0); }
@@ -42,7 +42,7 @@ struct BenchQueue {
 
 #elif defined(USE_CAS_LF)
 
-#include "one_queue_with_cas.h"
+#include "concurrent_queue/lock_free_queue.h"
 struct BenchQueue {
   queue_t q_;
   void init() { initialize(&q_, 0); }
@@ -54,7 +54,7 @@ struct BenchQueue {
 
 #elif defined(USE_DVYUKOV_MPMC)
 
-#include "mpmc_dmitry.h"
+#include "concurrent_queue/vyukov_bounded_queue.h"
 struct BenchQueue {
   // Large bounded capacity to reduce producer backpressure during benchmarks.
   dvyukov::mpmc_bounded_queue<int> q_{1u << 22};
@@ -72,7 +72,7 @@ struct BenchQueue {
 
 #elif defined(USE_DVYUKOV_MPMC_SHARDED)
 
-#include "simplified_mpmc_dmitry.h"
+#include "concurrent_queue/sharded_vyukov_queue.h"
 #ifndef DVYUKOV_SHARD_COUNT
 #define DVYUKOV_SHARD_COUNT 16
 #endif
@@ -101,7 +101,7 @@ struct BenchQueue {
 
 #elif defined(USE_MOODYCAMEL)
 
-#include "moodycamel.h"
+#include "concurrent_queue/moodycamel.h"
 struct BenchQueue {
   moodycamel::ConcurrentQueue<int> q_;
   void init() {}
@@ -123,7 +123,7 @@ struct BenchQueue {
 
 #elif defined(USE_SIMPLE_MC)
 
-#include "simplified_moodycamel.h"
+#include "concurrent_queue/simple_concurrent_queue.h"
 struct BenchQueue {
   simple_mc::SimpleConcurrentQueue<int> q_;
   void init() {}

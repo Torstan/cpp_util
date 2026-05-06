@@ -5,7 +5,7 @@
 #include <thread>
 #include <vector>
 
-#include "simplified_moodycamel.h"
+#include "concurrent_queue/simple_concurrent_queue.h"
 
 namespace {
 
