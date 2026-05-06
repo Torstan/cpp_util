@@ -6,30 +6,7 @@
 #include <thread>
 #include <vector>
 
-// lock_free_queue.h and lock_free_queue2.h both export global symbols with
-// identical names; prefix the two-lock queue symbols during include.
-#define data_t two_lock_data_t
-#define mutex_t two_lock_mutex_t
-#define node_t two_lock_node_t
-#define queue_t two_lock_queue_t
-#define new_node two_lock_new_node
-#define free_node two_lock_free_node
-#define initialize two_lock_initialize
-#define enqueue two_lock_enqueue
-#define dequeue two_lock_dequeue
-#define LFQ_CACHE_LINE TWO_LOCK_LFQ_CACHE_LINE
 #include "concurrent_queue/two_lock_queue.h"
-#undef LFQ_CACHE_LINE
-#undef dequeue
-#undef enqueue
-#undef initialize
-#undef free_node
-#undef new_node
-#undef queue_t
-#undef node_t
-#undef mutex_t
-#undef data_t
-
 #include "concurrent_queue/lock_free_queue.h"
 #include "concurrent_queue/sharded_vyukov_queue.h"
 #include "concurrent_queue/vyukov_bounded_queue.h"
@@ -38,46 +15,19 @@
 namespace {
 
 struct TwoLockQueueAdapter {
-  two_lock_queue_t q_;
+  concurrent_queue::TwoLockQueue q_;
 
-  TwoLockQueueAdapter() {
-    two_lock_initialize(&q_, 0);
-  }
-
-  void enqueue(int value) {
-    two_lock_enqueue(&q_, value);
-  }
-
-  bool dequeue(int* value) {
-    return two_lock_dequeue(&q_, value);
-  }
-
-  static const char* name() {
-    return "TwoLockQueue";
-  }
+  void enqueue(int value) { q_.Enqueue(value); }
+  bool dequeue(int* value) { return q_.Dequeue(value); }
+  static const char* name() { return "TwoLockQueue"; }
 };
 
-struct CasLockFreeQueueAdapter {
-  queue_t q_;
+struct LockFreeQueueAdapter {
+  concurrent_queue::LockFreeQueue q_;
 
-  CasLockFreeQueueAdapter() {
-    initialize(&q_, 0);
-  }
-  ~CasLockFreeQueueAdapter() {
-    destroy(&q_);
-  }
-
-  void enqueue(int value) {
-    ::enqueue(&q_, value);
-  }
-
-  bool dequeue(int* value) {
-    return ::dequeue(&q_, value);
-  }
-
-  static const char* name() {
-    return "CASLockFree";
-  }
+  void enqueue(int value) { q_.Enqueue(value); }
+  bool dequeue(int* value) { return q_.Dequeue(value); }
+  static const char* name() { return "LockFreeQueue"; }
 };
 
 struct SimpleMcQueueAdapter {
@@ -368,7 +318,7 @@ void test_dvyukov_bounded_full_empty_behavior() {
 
 int main() {
   run_common_queue_tests<TwoLockQueueAdapter>();
-  run_common_queue_tests<CasLockFreeQueueAdapter>();
+  run_common_queue_tests<LockFreeQueueAdapter>();
   run_common_queue_tests<SimpleMcQueueAdapter>();
   run_common_queue_tests<DvyukovMpmcQueueAdapter>();
   run_common_queue_tests<DvyukovShardedQueueAdapter>();
