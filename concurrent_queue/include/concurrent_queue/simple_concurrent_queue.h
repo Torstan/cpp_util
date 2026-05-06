@@ -15,17 +15,19 @@ static constexpr std::size_t SC_BLOCK_SIZE = 32;
 static constexpr std::size_t SC_CACHE_LINE = 64;
 static constexpr std::size_t SC_MAX_PRODUCERS = 256;
 
-namespace simple_mc {
+namespace concurrent_queue {
 
-template <typename T> struct Block {
+namespace detail {
+
+template <typename T> struct SimpleQueueBlock {
   static_assert(!std::is_reference_v<T>, "T must not be a reference type");
 
   alignas(T) std::byte storage[SC_BLOCK_SIZE][sizeof(T)];
   std::atomic<uint8_t> committed[SC_BLOCK_SIZE]; // 0=not ready, 1=readable
-  Block *next{nullptr};
+  SimpleQueueBlock *next{nullptr};
   uint64_t base_index{0};
 
-  explicit Block(uint64_t base) : next(nullptr), base_index(base) {
+  explicit SimpleQueueBlock(uint64_t base) : next(nullptr), base_index(base) {
     for (std::size_t i = 0; i < SC_BLOCK_SIZE; ++i)
       committed[i].store(0, std::memory_order_relaxed);
   }
@@ -48,40 +50,40 @@ template <typename T> struct Block {
 // Block index: O(1) lookup of block by slot number.
 // Two-level index: array of segments, each segment holds pointers to blocks.
 // Never deallocates during operation — safe for concurrent readers.
-template <typename T> struct BlockIndex {
+template <typename T> struct SimpleQueueBlockIndex {
   static constexpr int SEG_SHIFT = 10; // 1024 blocks per segment
   static constexpr int SEG_SIZE = 1
                                   << SEG_SHIFT; // = 1024 (covers 32K elements)
   static constexpr int MAX_SEGS = 64; // up to 64*1024*32 = 2M elements
 
-  // Each segment is an array of atomic<Block<T>*>
-  std::atomic<std::atomic<Block<T> *> *> segments[MAX_SEGS]{};
+  // Each segment is an array of atomic<SimpleQueueBlock<T>*>
+  std::atomic<std::atomic<SimpleQueueBlock<T> *> *> segments[MAX_SEGS]{};
 
-  BlockIndex() {
+  SimpleQueueBlockIndex() {
     // Allocate first segment eagerly
-    auto *seg = new std::atomic<Block<T> *>[SEG_SIZE] {};
+    auto *seg = new std::atomic<SimpleQueueBlock<T> *>[SEG_SIZE] {};
     segments[0].store(seg, std::memory_order_relaxed);
   }
 
-  ~BlockIndex() {
+  ~SimpleQueueBlockIndex() {
     for (int i = 0; i < MAX_SEGS; i++) {
       auto *seg = segments[i].load(std::memory_order_relaxed);
       delete[] seg;
     }
   }
 
-  void store(uint64_t block_idx, Block<T> *b) {
+  void store(uint64_t block_idx, SimpleQueueBlock<T> *b) {
     std::size_t seg_idx = static_cast<std::size_t>(block_idx >> SEG_SHIFT);
     std::size_t slot = static_cast<std::size_t>(block_idx & (SEG_SIZE - 1));
     auto *seg = segments[seg_idx].load(std::memory_order_acquire);
     if (!seg) {
-      seg = new std::atomic<Block<T> *>[SEG_SIZE] {};
+      seg = new std::atomic<SimpleQueueBlock<T> *>[SEG_SIZE] {};
       segments[seg_idx].store(seg, std::memory_order_release);
     }
     seg[slot].store(b, std::memory_order_release);
   }
 
-  Block<T> *load(uint64_t block_idx) {
+  SimpleQueueBlock<T> *load(uint64_t block_idx) {
     std::size_t seg_idx = static_cast<std::size_t>(block_idx >> SEG_SHIFT);
     std::size_t slot = static_cast<std::size_t>(block_idx & (SEG_SIZE - 1));
     auto *seg = segments[seg_idx].load(std::memory_order_acquire);
@@ -91,26 +93,26 @@ template <typename T> struct BlockIndex {
   }
 };
 
-template <typename T> struct ProducerSubQueue {
+template <typename T> struct SimpleQueueProducer {
   // --- Producer side (single writer, own cache line) ---
   alignas(SC_CACHE_LINE) std::atomic<uint64_t> tail_index{0};
-  Block<T> *tail_block{nullptr};
-  BlockIndex<T> block_index;
+  SimpleQueueBlock<T> *tail_block{nullptr};
+  SimpleQueueBlockIndex<T> block_index;
 
   // --- Consumer side (multiple readers, separate cache line) ---
   // head_index is the next slot to be claimed by consumers.
   alignas(SC_CACHE_LINE) std::atomic<uint64_t> head_index{0};
 
   // --- Linkage ---
-  std::atomic<ProducerSubQueue *> next_producer{nullptr};
+  std::atomic<SimpleQueueProducer *> next_producer{nullptr};
 
-  ProducerSubQueue() {
-    auto *block = new Block<T>(0);
+  SimpleQueueProducer() {
+    auto *block = new SimpleQueueBlock<T>(0);
     tail_block = block;
     block_index.store(0, block);
   }
 
-  ~ProducerSubQueue() {
+  ~SimpleQueueProducer() {
     // Destroy any still-live elements using contiguous block iteration to keep
     // the destructor cache-friendly.
     uint64_t head = head_index.load(std::memory_order_relaxed);
@@ -118,7 +120,7 @@ template <typename T> struct ProducerSubQueue {
     uint64_t index = head;
     while (index < tail) {
       uint64_t block_idx = index / SC_BLOCK_SIZE;
-      Block<T> *block = block_index.load(block_idx);
+      SimpleQueueBlock<T> *block = block_index.load(block_idx);
       if (!block) {
         break;
       }
@@ -132,14 +134,16 @@ template <typename T> struct ProducerSubQueue {
     }
 
     // Free all blocks via the linked list.
-    Block<T> *b = block_index.load(0);
+    SimpleQueueBlock<T> *b = block_index.load(0);
     while (b) {
-      Block<T> *n = b->next;
+      SimpleQueueBlock<T> *n = b->next;
       delete b;
       b = n;
     }
   }
 };
+
+} // namespace detail
 
 template <typename T = int> class SimpleConcurrentQueue {
 public:
@@ -149,10 +153,11 @@ public:
                                                  std::memory_order_relaxed)) {}
 
   ~SimpleConcurrentQueue() {
-    ProducerSubQueue<T> *p =
+    detail::SimpleQueueProducer<T> *p =
         producer_list_head_.load(std::memory_order_relaxed);
     while (p) {
-      ProducerSubQueue<T> *n = p->next_producer.load(std::memory_order_relaxed);
+      detail::SimpleQueueProducer<T> *n =
+          p->next_producer.load(std::memory_order_relaxed);
       delete p;
       p = n;
     }
@@ -163,20 +168,21 @@ public:
     }
   }
 
-  template <typename U> void enqueue(U &&v) { emplace(std::forward<U>(v)); }
+  template <typename U> void Enqueue(U &&v) { Emplace(std::forward<U>(v)); }
 
-  template <typename... Args> void emplace(Args &&...args) {
-    ProducerSubQueue<T> *p = get_or_create_producer();
+  template <typename... Args> void Emplace(Args &&...args) {
+    detail::SimpleQueueProducer<T> *p = GetOrCreateProducer();
     const uint64_t tail = p->tail_index.load(std::memory_order_relaxed);
     const std::size_t slot = static_cast<std::size_t>(tail & (SC_BLOCK_SIZE - 1));
     const uint64_t block_idx = tail / SC_BLOCK_SIZE;
 
-    Block<T> *tail_block = p->tail_block;
+    detail::SimpleQueueBlock<T> *tail_block = p->tail_block;
     if (slot == 0 && tail != 0) {
-      if (block_idx >= BlockIndex<T>::MAX_SEGS * BlockIndex<T>::SEG_SIZE) {
+      if (block_idx >= detail::SimpleQueueBlockIndex<T>::MAX_SEGS *
+                           detail::SimpleQueueBlockIndex<T>::SEG_SIZE) {
         throw std::runtime_error("SimpleConcurrentQueue: sub-queue capacity exceeded");
       }
-      auto *block = new Block<T>(tail);
+      auto *block = new detail::SimpleQueueBlock<T>(tail);
       tail_block->next = block;
       p->tail_block = block;
       tail_block = block;
@@ -188,7 +194,7 @@ public:
     p->tail_index.store(tail + 1, std::memory_order_release);
   }
 
-  bool dequeue(T *v) {
+  bool Dequeue(T *v) {
     if (!v)
       return false;
 
@@ -197,7 +203,8 @@ public:
       return false;
 
     // Per-consumer cached producer snapshot.
-    thread_local ProducerSubQueue<T> *cached_producers[SC_MAX_PRODUCERS];
+    thread_local detail::SimpleQueueProducer<T> *
+        cached_producers[SC_MAX_PRODUCERS];
     thread_local int cached_count = 0;
     thread_local const SimpleConcurrentQueue *cached_queue = nullptr;
     thread_local uint64_t cached_queue_id = 0;
@@ -217,28 +224,30 @@ public:
 
     uint32_t start = rr++;
     for (int i = 0; i < cached_count; i++) {
-      ProducerSubQueue<T> *target =
+      detail::SimpleQueueProducer<T> *target =
           cached_producers[(start + i) % cached_count];
-      if (dequeue_from(target, v))
+      if (DequeueFrom(target, v))
         return true;
     }
     return false;
   }
 
-  bool dequeue(T &v) { return dequeue(&v); }
+  bool Dequeue(T &v) { return Dequeue(&v); }
 
 private:
-  alignas(SC_CACHE_LINE) std::atomic<ProducerSubQueue<T> *> producer_list_head_;
+  alignas(SC_CACHE_LINE)
+      std::atomic<detail::SimpleQueueProducer<T> *> producer_list_head_;
   alignas(SC_CACHE_LINE) std::atomic<int> producer_count_;
   const uint64_t instance_id_;
 
   static inline std::atomic<uint64_t> next_instance_id_{1};
-  static inline thread_local ProducerSubQueue<T> *my_producer_ = nullptr;
+  static inline thread_local detail::SimpleQueueProducer<T> *my_producer_ =
+      nullptr;
   static inline thread_local const SimpleConcurrentQueue *my_producer_owner_ =
       nullptr;
   static inline thread_local uint64_t my_producer_owner_id_ = 0;
 
-  ProducerSubQueue<T> *get_or_create_producer() {
+  detail::SimpleQueueProducer<T> *GetOrCreateProducer() {
     if (my_producer_ && my_producer_owner_ == this &&
         my_producer_owner_id_ == instance_id_) {
       return my_producer_;
@@ -256,8 +265,8 @@ private:
       }
     }
 
-    auto *p = new ProducerSubQueue<T>();
-    ProducerSubQueue<T> *head =
+    auto *p = new detail::SimpleQueueProducer<T>();
+    detail::SimpleQueueProducer<T> *head =
         producer_list_head_.load(std::memory_order_relaxed);
     do {
       p->next_producer.store(head, std::memory_order_relaxed);
@@ -270,7 +279,7 @@ private:
     return p;
   }
 
-  bool dequeue_from(ProducerSubQueue<T> *p, T *v) {
+  bool DequeueFrom(detail::SimpleQueueProducer<T> *p, T *v) {
     // Claim a concrete slot with CAS so consumers can never advance past tail.
     uint64_t my_slot;
     while (true) {
@@ -287,7 +296,7 @@ private:
 
     // O(1) block lookup via index.
     uint64_t block_idx = my_slot / SC_BLOCK_SIZE;
-    Block<T> *block = p->block_index.load(block_idx);
+    detail::SimpleQueueBlock<T> *block = p->block_index.load(block_idx);
 
     // Spin until producer has stored the block (rare: only at block
     // boundaries).
@@ -323,4 +332,4 @@ private:
   }
 };
 
-} // namespace simple_mc
+} // namespace concurrent_queue

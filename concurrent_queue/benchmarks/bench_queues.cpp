@@ -60,43 +60,44 @@ struct BenchQueue {
   void init() {}
   void enqueue(int v) {
     int spins = 0;
-    while (!q_.enqueue(v)) {
+    while (!q_.enqueue (v)) {
       if ((++spins & 63) == 0)
         std::this_thread::yield();
     }
   }
-  bool dequeue(int *v) { return q_.dequeue(*v); }
+  bool dequeue(int *v) { return q_.dequeue (*v); }
   static const char* name() { return "Dvyukov MPMC"; }
 };
 
 #elif defined(USE_DVYUKOV_MPMC_SHARDED)
 
 #include "concurrent_queue/sharded_vyukov_queue.h"
-#ifndef DVYUKOV_SHARD_COUNT
-#define DVYUKOV_SHARD_COUNT 16
+#ifndef VYUKOV_SHARD_COUNT
+#define VYUKOV_SHARD_COUNT 16
 #endif
-#define DVYUKOV_STR_IMPL(x) #x
-#define DVYUKOV_STR(x) DVYUKOV_STR_IMPL(x)
+#define VYUKOV_STR_IMPL(x) #x
+#define VYUKOV_STR(x) VYUKOV_STR_IMPL(x)
 struct BenchQueue {
-  dmitry::mpmc_bounded_queue_sharded<int, DVYUKOV_SHARD_COUNT> q_{1u << 22};
+  concurrent_queue::ShardedVyukovQueue<int, VYUKOV_SHARD_COUNT> q_{1u << 22};
   void init() {}
   void enqueue(int v) {
     int spins = 0;
-    while (!q_.enqueue(v)) {
-      if ((++spins & 63) == 0)
+    while (!q_.Enqueue(v)) {
+      if ((++spins & 63) == 0) {
         std::this_thread::yield();
+      }
     }
   }
-  bool dequeue(int *v) { return q_.dequeue(*v); }
+  bool dequeue(int *v) { return q_.Dequeue(*v); }
   static const char* name() {
-    if constexpr (DVYUKOV_SHARD_COUNT == 16) {
-      return "Dvyukov MPMC Sharded";
+    if constexpr (VYUKOV_SHARD_COUNT == 16) {
+      return "ShardedVyukovQueue";
     }
-    return "Dvyukov MPMC Sharded(" DVYUKOV_STR(DVYUKOV_SHARD_COUNT) ")";
+    return "ShardedVyukovQueue(" VYUKOV_STR(VYUKOV_SHARD_COUNT) ")";
   }
 };
-#undef DVYUKOV_STR
-#undef DVYUKOV_STR_IMPL
+#undef VYUKOV_STR
+#undef VYUKOV_STR_IMPL
 
 #elif defined(USE_MOODYCAMEL)
 
@@ -104,7 +105,7 @@ struct BenchQueue {
 struct BenchQueue {
   moodycamel::ConcurrentQueue<int> q_;
   void init() {}
-  void enqueue(int v) { q_.enqueue(v); }
+  void enqueue(int v) { q_.enqueue (v); }
   bool dequeue(int *v) { return q_.try_dequeue(*v); }
   static const char* name() { return "Moodycamel"; }
 };
@@ -124,11 +125,11 @@ struct BenchQueue {
 
 #include "concurrent_queue/simple_concurrent_queue.h"
 struct BenchQueue {
-  simple_mc::SimpleConcurrentQueue<int> q_;
+  concurrent_queue::SimpleConcurrentQueue<int> q_;
   void init() {}
-  void enqueue(int v) { q_.enqueue(v); }
-  bool dequeue(int *v) { return q_.dequeue(v); }
-  static const char* name() { return "SimpleMoodycamel"; }
+  void enqueue(int v) { q_.Enqueue(v); }
+  bool dequeue(int *v) { return q_.Dequeue(v); }
+  static const char* name() { return "SimpleConcurrentQueue"; }
 };
 
 #else
@@ -165,17 +166,17 @@ Metrics run_once(int np, int nc, int items_per_p) {
 
   for (int t = 0; t < np; t++)
     threads.emplace_back([&q, items_per_p]() {
-      for (int i = 0; i < items_per_p; i++) q.enqueue(i);
+      for (int i = 0; i < items_per_p; i++) q.enqueue (i);
     });
 
   for (int t = 0; t < nc; t++)
     threads.emplace_back([&q, &consumed, &done]() {
       int v;
       while (true) {
-        if (q.dequeue(&v)) {
+        if (q.dequeue (&v)) {
           consumed.fetch_add(1, std::memory_order_relaxed);
         } else if (done.load(std::memory_order_acquire)) {
-          while (q.dequeue(&v))
+          while (q.dequeue (&v))
             consumed.fetch_add(1, std::memory_order_relaxed);
           break;
         }

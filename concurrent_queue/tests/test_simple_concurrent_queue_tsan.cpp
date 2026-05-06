@@ -10,32 +10,32 @@
 namespace {
 
 void test_multi_instance_same_thread() {
-  simple_mc::SimpleConcurrentQueue<int> q1;
-  simple_mc::SimpleConcurrentQueue<int> q2;
+  concurrent_queue::SimpleConcurrentQueue<int> q1;
+  concurrent_queue::SimpleConcurrentQueue<int> q2;
 
-  q1.enqueue(11);
-  q2.enqueue(22);
+  q1.Enqueue(11);
+  q2.Enqueue(22);
 
   int v = 0;
-  assert(q1.dequeue(&v) && v == 11);
-  assert(q2.dequeue(&v) && v == 22);
-  assert(!q1.dequeue(&v));
-  assert(!q2.dequeue(&v));
+  assert(q1.Dequeue(&v) && v == 11);
+  assert(q2.Dequeue(&v) && v == 22);
+  assert(!q1.Dequeue(&v));
+  assert(!q2.Dequeue(&v));
 }
 
 void test_string_type_basic() {
-  simple_mc::SimpleConcurrentQueue<std::string> q;
-  q.enqueue("a");
-  q.emplace(4, 'x');
+  concurrent_queue::SimpleConcurrentQueue<std::string> q;
+  q.Enqueue("a");
+  q.Emplace(4, 'x');
 
   std::string out;
-  assert(q.dequeue(out) && out == "a");
-  assert(q.dequeue(out) && out == "xxxx");
-  assert(!q.dequeue(out));
+  assert(q.Dequeue(out) && out == "a");
+  assert(q.Dequeue(out) && out == "xxxx");
+  assert(!q.Dequeue(out));
 }
 
 void stress_mpmc_int() {
-  simple_mc::SimpleConcurrentQueue<int> q;
+  concurrent_queue::SimpleConcurrentQueue<int> q;
 
   const int producers = 4;
   const int consumers = 4;
@@ -57,7 +57,7 @@ void stress_mpmc_int() {
     threads.emplace_back([&q, &produced, p, items_per_producer]() {
       const int base = p * items_per_producer;
       for (int i = 0; i < items_per_producer; ++i) {
-        q.enqueue(base + i);
+        q.Enqueue(base + i);
         produced.fetch_add(1, std::memory_order_relaxed);
       }
     });
@@ -67,12 +67,12 @@ void stress_mpmc_int() {
     threads.emplace_back([&q, &seen, &consumed, &done, total]() {
       int v = -1;
       while (true) {
-        if (q.dequeue(&v)) {
+        if (q.Dequeue(&v)) {
           assert(v >= 0 && v < total);
           seen[v].fetch_add(1, std::memory_order_relaxed);
           consumed.fetch_add(1, std::memory_order_relaxed);
         } else if (done.load(std::memory_order_acquire)) {
-          while (q.dequeue(&v)) {
+          while (q.Dequeue(&v)) {
             assert(v >= 0 && v < total);
             seen[v].fetch_add(1, std::memory_order_relaxed);
             consumed.fetch_add(1, std::memory_order_relaxed);
