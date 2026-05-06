@@ -23,6 +23,12 @@ Run optional lint checks before committing:
 make lint
 ```
 
+Verify the lint wrapper behavior:
+
+```bash
+make test-lint
+```
+
 Build every default target:
 
 ```bash
