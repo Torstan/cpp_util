@@ -21,7 +21,7 @@ all: $(TEST_BINS)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/common_test: $(TEST_DIR)/common_test.cpp $(TEST_UTILS) include/computational_geometry/common.h | $(BUILD_DIR)
+$(BUILD_DIR)/common_test: $(TEST_DIR)/common_test.cpp $(TEST_UTILS) include/computational_geometry/common.h include/computational_geometry/edge_polygon.h include/computational_geometry/point_circle.h | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TEST_DIR)/common_test.cpp $(TEST_DIR)/test_utils.cpp -o $@
 
 $(BUILD_DIR)/point_circle_test: $(TEST_DIR)/point_circle_test.cpp $(TEST_UTILS) include/computational_geometry/point_circle.h include/computational_geometry/common.h | $(BUILD_DIR)
