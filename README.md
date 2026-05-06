@@ -17,6 +17,12 @@ Run all functional tests from the repository root:
 make test
 ```
 
+Run optional lint checks before committing:
+
+```bash
+make lint
+```
+
 Build every default target:
 
 ```bash

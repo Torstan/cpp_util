@@ -4,6 +4,11 @@ CPPFLAGS ?= -Iinclude
 
 BUILD_DIR := build
 TEST_DIR := tests
+LINT_CPP_SRCS := $(wildcard $(TEST_DIR)/*.cpp)
+LINT_DIRS := include $(TEST_DIR)
+CLANG_TIDY ?= bash ../scripts/run_clang_tidy_errors.sh
+CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
+CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem
 
 TEST_BINS := \
 	$(BUILD_DIR)/common_test \
@@ -14,7 +19,7 @@ TEST_BINS := \
 
 TEST_UTILS := $(TEST_DIR)/test_utils.cpp $(TEST_DIR)/test_utils.h
 
-.PHONY: all test clean
+.PHONY: all test clean lint
 
 all: $(TEST_BINS)
 
@@ -40,6 +45,18 @@ test: all
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin; \
 	done
+
+lint:
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+		$(CLANG_TIDY) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS); \
+	else \
+		echo "clang-tidy not installed; skipping"; \
+	fi
+	@if command -v cppcheck >/dev/null 2>&1; then \
+		$(CPPCHECK) $(CPPCHECK_FLAGS) $(LINT_DIRS); \
+	else \
+		echo "cppcheck not installed; skipping"; \
+	fi
 
 clean:
 	rm -rf $(BUILD_DIR)

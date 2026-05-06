@@ -12,6 +12,12 @@ TSAN_TEST_SRC := tests/test_simple_concurrent_queue_tsan.cpp
 OUT_DIR := build
 DEP_DIR := $(OUT_DIR)/deps
 RUN_STAGE_DIR := $(OUT_DIR)/run_stage
+LINT_CPP_SRCS := $(SRC) $(TEST_SRC) $(TSAN_TEST_SRC)
+LINT_DIRS := include tests benchmarks
+LINT_BENCH_DEF ?= -DUSE_MUTEX_QUEUE
+CLANG_TIDY ?= bash ../scripts/run_clang_tidy_errors.sh
+CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
+CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem --suppress=ctuOneDefinitionRuleViolation:benchmarks/bench_queues.cpp
 TEST_BIN := $(OUT_DIR)/test_lock_free_queue
 TSAN_TEST_BIN := $(OUT_DIR)/test_simple_concurrent_queue_tsan
 TSAN_BENCH_BINS = $(addprefix $(OUT_DIR)/bench_tsan_,$(QUEUES))
@@ -57,7 +63,7 @@ SCENARIOS ?= 1:1:1P-1C 4:4:4P-4C 1:4:1P-4C 4:1:4P-1C 8:8:8P-8C
 ITEMS ?= 200000
 ROUNDS ?= 5
 
-.PHONY: all all-with-tbb clean run run-% list test test-tsan test-tsan-bench test-tsan-all test-asan-bench test-ubsan-bench test-sanitize-all
+.PHONY: all all-with-tbb clean lint run run-% list test test-tsan test-tsan-bench test-tsan-all test-asan-bench test-ubsan-bench test-sanitize-all
 
 all: $(addprefix $(OUT_DIR)/bench_,$(DEFAULT_QUEUES))
 
@@ -119,6 +125,18 @@ $(TEST_BIN): $(TEST_SRC) | $(OUT_DIR)
 
 test: $(TEST_BIN)
 	@$(RUN_STAGED) $<
+
+lint:
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+		$(CLANG_TIDY) $(LINT_CPP_SRCS) -- $(CPPFLAGS) $(CXXFLAGS) $(LINT_BENCH_DEF); \
+	else \
+		echo "clang-tidy not installed; skipping"; \
+	fi
+	@if command -v cppcheck >/dev/null 2>&1; then \
+		$(CPPCHECK) $(CPPCHECK_FLAGS) $(LINT_DIRS); \
+	else \
+		echo "cppcheck not installed; skipping"; \
+	fi
 
 $(TSAN_TEST_BIN): $(TSAN_TEST_SRC) | $(OUT_DIR)
 	$(CXX) $(CPPFLAGS) $(TSAN_CXXFLAGS) -o $@ $< $(LDFLAGS) $(TSAN_LDLIBS)
