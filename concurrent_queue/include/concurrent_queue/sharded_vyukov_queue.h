@@ -8,14 +8,14 @@
 #include <memory>
 #include <vector>
 
-namespace dmitry {
+namespace concurrent_queue {
 
 namespace detail {
 
 template <typename T>
-class bounded_queue_core {
+class VyukovBoundedQueueCore {
 public:
-  explicit bounded_queue_core(std::size_t buffer_size)
+  explicit VyukovBoundedQueueCore(std::size_t buffer_size)
       : buffer_(buffer_size), buffer_mask_(buffer_size - 1) {
     assert((buffer_size >= 2) && ((buffer_size & (buffer_size - 1)) == 0));
     for (std::size_t i = 0; i != buffer_size; ++i) {
@@ -25,7 +25,7 @@ public:
     dequeue_pos_.value.store(0, std::memory_order_relaxed);
   }
 
-  bool enqueue(const T &data) {
+  bool Enqueue(const T &data) {
     cell_t *cell;
     std::size_t pos = enqueue_pos_.value.load(std::memory_order_relaxed);
     for (;;) {
@@ -50,7 +50,7 @@ public:
     return true;
   }
 
-  bool dequeue(T &data) {
+  bool Dequeue(T &data) {
     cell_t *cell;
     std::size_t pos = dequeue_pos_.value.load(std::memory_order_relaxed);
     for (;;) {
@@ -94,25 +94,25 @@ private:
 } // namespace detail
 
 template <typename T, size_t ShardCount = 16>
-class mpmc_bounded_queue_sharded {
+class ShardedVyukovQueue {
 public:
   // Throughput-oriented wrapper around multiple Vyukov queues. It keeps FIFO
   // within each shard, but not a single global FIFO order across shards.
-  explicit mpmc_bounded_queue_sharded(size_t buffer_size)
+  explicit ShardedVyukovQueue(size_t buffer_size)
       : shard_mask_(ShardCount - 1),
-        shard_capacity_(normalize_capacity(buffer_size)),
+        capacity_per_shard_(NormalizeCapacity(buffer_size)),
         shards_(ShardCount) {
     static_assert((ShardCount >= 2) && ((ShardCount & (ShardCount - 1)) == 0),
                   "ShardCount must be a power of two and >= 2");
     for (size_t i = 0; i < ShardCount; ++i) {
       shards_[i] =
-          std::make_unique<detail::bounded_queue_core<T>>(
-              shard_capacity_);
+          std::make_unique<detail::VyukovBoundedQueueCore<T>>(
+              capacity_per_shard_);
     }
   }
 
-  bool enqueue(const T &data) {
-    static thread_local const mpmc_bounded_queue_sharded *producer_owner =
+  bool Enqueue(const T &data) {
+    static thread_local const ShardedVyukovQueue *producer_owner =
         nullptr;
     static thread_local size_t producer_shard = 0;
     if (producer_owner != this) {
@@ -123,7 +123,7 @@ public:
     }
     for (size_t attempt = 0; attempt < ShardCount; ++attempt) {
       const size_t shard = (producer_shard + attempt) & shard_mask_;
-      if (shards_[shard]->enqueue(data)) {
+      if (shards_[shard]->Enqueue(data)) {
         producer_shard = shard;
         return true;
       }
@@ -131,8 +131,8 @@ public:
     return false;
   }
 
-  bool dequeue(T &data) {
-    static thread_local const mpmc_bounded_queue_sharded *consumer_owner =
+  bool Dequeue(T &data) {
+    static thread_local const ShardedVyukovQueue *consumer_owner =
         nullptr;
     static thread_local size_t consumer_next_shard = 0;
     if (consumer_owner != this) {
@@ -143,7 +143,7 @@ public:
     }
     for (size_t attempt = 0; attempt < ShardCount; ++attempt) {
       const size_t shard = (consumer_next_shard + attempt) & shard_mask_;
-      if (shards_[shard]->dequeue(data)) {
+      if (shards_[shard]->Dequeue(data)) {
         consumer_next_shard = (shard + 1) & shard_mask_;
         return true;
       }
@@ -151,10 +151,10 @@ public:
     return false;
   }
 
-  size_t shard_capacity() const { return shard_capacity_; }
+  size_t ShardCapacity() const { return capacity_per_shard_; }
 
 private:
-  static size_t round_up_power_of_two(size_t value) {
+  static size_t RoundUpPowerOfTwo(size_t value) {
     size_t power = 2;
     while (power < value) {
       power <<= 1;
@@ -162,19 +162,19 @@ private:
     return power;
   }
 
-  static size_t normalize_capacity(size_t total_capacity) {
+  static size_t NormalizeCapacity(size_t total_capacity) {
     const size_t per_shard =
         std::max<size_t>(2, (total_capacity + ShardCount - 1) / ShardCount);
-    return round_up_power_of_two(per_shard);
+    return RoundUpPowerOfTwo(per_shard);
   }
 
   const size_t shard_mask_;
-  const size_t shard_capacity_;
+  const size_t capacity_per_shard_;
   // Cold members: shard selection is cached in thread_local state, so these are
   // not per-operation hotspots and do not need cache-line padding.
-  std::vector<std::unique_ptr<detail::bounded_queue_core<T>>> shards_;
+  std::vector<std::unique_ptr<detail::VyukovBoundedQueueCore<T>>> shards_;
   std::atomic<size_t> next_producer_shard_{0};
   mutable std::atomic<size_t> next_consumer_shard_{0};
 };
 
-} // namespace dmitry
+} // namespace concurrent_queue

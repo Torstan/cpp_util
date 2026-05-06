@@ -30,20 +30,12 @@ struct LockFreeQueueAdapter {
   static const char* name() { return "LockFreeQueue"; }
 };
 
-struct SimpleMcQueueAdapter {
-  simple_mc::SimpleConcurrentQueue<int> q_;
+struct SimpleConcurrentQueueAdapter {
+  concurrent_queue::SimpleConcurrentQueue<int> q_;
 
-  void enqueue(int value) {
-    q_.enqueue(value);
-  }
-
-  bool dequeue(int* value) {
-    return q_.dequeue(value);
-  }
-
-  static const char* name() {
-    return "SimpleConcurrentQueue<int>";
-  }
+  void enqueue(int value) { q_.Enqueue(value); }
+  bool dequeue(int* value) { return q_.Dequeue(value); }
+  static const char* name() { return "SimpleConcurrentQueue<int>"; }
 };
 
 struct DvyukovMpmcQueueAdapter {
@@ -53,14 +45,14 @@ struct DvyukovMpmcQueueAdapter {
 
   void enqueue(int value) {
     int spins = 0;
-    while (!q_.enqueue(value)) {
+    while (!q_.enqueue (value)) {
       if ((++spins & 63) == 0)
         std::this_thread::yield();
     }
   }
 
   bool dequeue(int* value) {
-    return q_.dequeue(*value);
+    return q_.dequeue (*value);
   }
 
   static const char* name() {
@@ -68,24 +60,20 @@ struct DvyukovMpmcQueueAdapter {
   }
 };
 
-struct DvyukovShardedQueueAdapter {
-  dmitry::mpmc_bounded_queue_sharded<int> q_{1u << 18};
+struct ShardedVyukovQueueAdapter {
+  concurrent_queue::ShardedVyukovQueue<int> q_{1u << 18};
 
   void enqueue(int value) {
     int spins = 0;
-    while (!q_.enqueue(value)) {
-      if ((++spins & 63) == 0)
+    while (!q_.Enqueue(value)) {
+      if ((++spins & 63) == 0) {
         std::this_thread::yield();
+      }
     }
   }
 
-  bool dequeue(int* value) {
-    return q_.dequeue(*value);
-  }
-
-  static const char* name() {
-    return "DvyukovMPMCSharded";
-  }
+  bool dequeue(int* value) { return q_.Dequeue(*value); }
+  static const char* name() { return "ShardedVyukovQueue"; }
 };
 
 template <typename Queue>
@@ -93,15 +81,15 @@ void test_basic_fifo() {
   Queue q;
   int v = -1;
 
-  assert(!q.dequeue(&v));
+  assert(!q.dequeue (&v));
 
-  q.enqueue(1);
-  q.enqueue(2);
-  q.enqueue(3);
-  assert(q.dequeue(&v) && v == 1);
-  assert(q.dequeue(&v) && v == 2);
-  assert(q.dequeue(&v) && v == 3);
-  assert(!q.dequeue(&v));
+  q.enqueue (1);
+  q.enqueue (2);
+  q.enqueue (3);
+  assert(q.dequeue (&v) && v == 1);
+  assert(q.dequeue (&v) && v == 2);
+  assert(q.dequeue (&v) && v == 3);
+  assert(!q.dequeue (&v));
 
   std::printf("[%s] test_basic_fifo passed\n", Queue::name());
 }
@@ -119,7 +107,7 @@ void test_mpsc_unique_items() {
     producers.emplace_back([&q, p, items_per_producer]() {
       const int base = p * items_per_producer;
       for (int i = 0; i < items_per_producer; ++i)
-        q.enqueue(base + i);
+        q.enqueue (base + i);
     });
   }
   for (auto& t : producers)
@@ -128,7 +116,7 @@ void test_mpsc_unique_items() {
   std::vector<unsigned char> seen(total, 0);
   int consumed = 0;
   int v = -1;
-  while (q.dequeue(&v)) {
+  while (q.dequeue (&v)) {
     assert(v >= 0 && v < total);
     assert(seen[v] == 0);
     seen[v] = 1;
@@ -149,7 +137,7 @@ void test_spmc_unique_items() {
   const int num_consumers = 4;
 
   for (int i = 0; i < total; ++i)
-    q.enqueue(i);
+    q.enqueue (i);
 
   std::vector<std::atomic<int>> seen(total);
   for (int i = 0; i < total; ++i)
@@ -161,7 +149,7 @@ void test_spmc_unique_items() {
   for (int c = 0; c < num_consumers; ++c) {
     consumers.emplace_back([&q, &seen, &consumed, total]() {
       int v = -1;
-      while (q.dequeue(&v)) {
+      while (q.dequeue (&v)) {
         assert(v >= 0 && v < total);
         seen[v].fetch_add(1, std::memory_order_relaxed);
         consumed.fetch_add(1, std::memory_order_relaxed);
@@ -201,7 +189,7 @@ void test_mpmc_unique_items() {
     threads.emplace_back([&q, &produced, p, items_per_producer]() {
       const int base = p * items_per_producer;
       for (int i = 0; i < items_per_producer; ++i) {
-        q.enqueue(base + i);
+        q.enqueue (base + i);
         produced.fetch_add(1, std::memory_order_relaxed);
       }
     });
@@ -211,12 +199,12 @@ void test_mpmc_unique_items() {
     threads.emplace_back([&q, &seen, &consumed, &done, total]() {
       int v = -1;
       while (true) {
-        if (q.dequeue(&v)) {
+        if (q.dequeue (&v)) {
           assert(v >= 0 && v < total);
           seen[v].fetch_add(1, std::memory_order_relaxed);
           consumed.fetch_add(1, std::memory_order_relaxed);
         } else if (done.load(std::memory_order_acquire)) {
-          while (q.dequeue(&v)) {
+          while (q.dequeue (&v)) {
             assert(v >= 0 && v < total);
             seen[v].fetch_add(1, std::memory_order_relaxed);
             consumed.fetch_add(1, std::memory_order_relaxed);
@@ -250,48 +238,48 @@ void run_common_queue_tests() {
   test_mpmc_unique_items<Queue>();
 }
 
-void test_simple_mc_template_type_support() {
-  simple_mc::SimpleConcurrentQueue<std::string> q;
+void test_simple_concurrent_queue_template_type_support() {
+  concurrent_queue::SimpleConcurrentQueue<std::string> q;
 
-  q.enqueue("hello");
-  q.emplace(3, 'x');
+  q.Enqueue("hello");
+  q.Emplace(3, 'x');
 
   std::string out;
-  assert(q.dequeue(out) && out == "hello");
-  assert(q.dequeue(out) && out == "xxx");
-  assert(!q.dequeue(out));
+  assert(q.Dequeue(out) && out == "hello");
+  assert(q.Dequeue(out) && out == "xxx");
+  assert(!q.Dequeue(out));
 
   std::printf("[SimpleConcurrentQueue<string>] test_type_support passed\n");
 }
 
-void test_simple_mc_multi_instance_isolation() {
-  simple_mc::SimpleConcurrentQueue<int> q1;
-  simple_mc::SimpleConcurrentQueue<int> q2;
+void test_simple_concurrent_queue_multi_instance_isolation() {
+  concurrent_queue::SimpleConcurrentQueue<int> q1;
+  concurrent_queue::SimpleConcurrentQueue<int> q2;
 
-  q1.enqueue(1);
-  q2.enqueue(2);
+  q1.Enqueue(1);
+  q2.Enqueue(2);
 
   int v = 0;
-  assert(q1.dequeue(&v) && v == 1);
-  assert(q2.dequeue(&v) && v == 2);
+  assert(q1.Dequeue(&v) && v == 1);
+  assert(q2.Dequeue(&v) && v == 2);
 
   std::printf("[SimpleConcurrentQueue<int>] test_multi_instance_isolation passed\n");
 }
 
-void test_simple_mc_reused_storage_isolation() {
-  using Queue = simple_mc::SimpleConcurrentQueue<int>;
+void test_simple_concurrent_queue_reused_storage_isolation() {
+  using Queue = concurrent_queue::SimpleConcurrentQueue<int>;
   alignas(Queue) unsigned char storage[sizeof(Queue)];
 
   Queue* q = new (storage) Queue();
-  q->enqueue(7);
+  q->Enqueue(7);
   int v = 0;
-  assert(q->dequeue(&v) && v == 7);
+  assert(q->Dequeue(&v) && v == 7);
   q->~Queue();
 
   q = new (storage) Queue();
-  q->enqueue(9);
-  assert(q->dequeue(&v) && v == 9);
-  assert(!q->dequeue(&v));
+  q->Enqueue(9);
+  assert(q->Dequeue(&v) && v == 9);
+  assert(!q->Dequeue(&v));
   q->~Queue();
 
   std::printf("[SimpleConcurrentQueue<int>] test_reused_storage_isolation passed\n");
@@ -301,15 +289,15 @@ void test_dvyukov_bounded_full_empty_behavior() {
   dvyukov::mpmc_bounded_queue<int> q(8);
 
   for (int i = 0; i < 8; ++i)
-    assert(q.enqueue(i));
-  assert(!q.enqueue(8)); // full
+    assert(q.enqueue (i));
+  assert(!q.enqueue (8)); // full
 
   int v = -1;
   for (int i = 0; i < 8; ++i) {
-    assert(q.dequeue(v));
+    assert(q.dequeue (v));
     assert(v == i);
   }
-  assert(!q.dequeue(v)); // empty
+  assert(!q.dequeue (v)); // empty
 
   std::printf("[DvyukovMPMC] test_bounded_full_empty_behavior passed\n");
 }
@@ -319,13 +307,13 @@ void test_dvyukov_bounded_full_empty_behavior() {
 int main() {
   run_common_queue_tests<TwoLockQueueAdapter>();
   run_common_queue_tests<LockFreeQueueAdapter>();
-  run_common_queue_tests<SimpleMcQueueAdapter>();
+  run_common_queue_tests<SimpleConcurrentQueueAdapter>();
   run_common_queue_tests<DvyukovMpmcQueueAdapter>();
-  run_common_queue_tests<DvyukovShardedQueueAdapter>();
+  run_common_queue_tests<ShardedVyukovQueueAdapter>();
 
-  test_simple_mc_template_type_support();
-  test_simple_mc_multi_instance_isolation();
-  test_simple_mc_reused_storage_isolation();
+  test_simple_concurrent_queue_template_type_support();
+  test_simple_concurrent_queue_multi_instance_isolation();
+  test_simple_concurrent_queue_reused_storage_isolation();
   test_dvyukov_bounded_full_empty_behavior();
 
   std::printf("All tests passed!\n");
