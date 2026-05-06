@@ -29,7 +29,7 @@ struct BenchQueue {
   static const char* name() { return "std::mutex+queue"; }
 };
 
-#elif defined(USE_TWO_LOCK)
+#elif defined(USE_TWO_LOCK_QUEUE)
 
 #include "concurrent_queue/two_lock_queue.h"
 struct BenchQueue {
@@ -40,7 +40,7 @@ struct BenchQueue {
   static const char* name() { return "TwoLockQueue"; }
 };
 
-#elif defined(USE_CAS_LF)
+#elif defined(USE_LOCK_FREE_QUEUE)
 
 #include "concurrent_queue/lock_free_queue.h"
 struct BenchQueue {
@@ -51,7 +51,7 @@ struct BenchQueue {
   static const char* name() { return "LockFreeQueue"; }
 };
 
-#elif defined(USE_DVYUKOV_MPMC)
+#elif defined(USE_VYUKOV_BOUNDED_QUEUE)
 
 #include "concurrent_queue/vyukov_bounded_queue.h"
 struct BenchQueue {
@@ -69,7 +69,7 @@ struct BenchQueue {
   static const char* name() { return "Dvyukov MPMC"; }
 };
 
-#elif defined(USE_DVYUKOV_MPMC_SHARDED)
+#elif defined(USE_SHARDED_VYUKOV_QUEUE)
 
 #include "concurrent_queue/sharded_vyukov_queue.h"
 #if defined(DVYUKOV_SHARD_COUNT) && !defined(VYUKOV_SHARD_COUNT)
@@ -124,7 +124,7 @@ struct BenchQueue {
   static const char* name() { return "TBB"; }
 };
 
-#elif defined(USE_SIMPLE_MC)
+#elif defined(USE_SIMPLE_CONCURRENT_QUEUE)
 
 #include "concurrent_queue/simple_concurrent_queue.h"
 struct BenchQueue {
@@ -136,7 +136,7 @@ struct BenchQueue {
 };
 
 #else
-#error "Define one of: USE_MUTEX_QUEUE, USE_TWO_LOCK, USE_CAS_LF, USE_DVYUKOV_MPMC, USE_DVYUKOV_MPMC_SHARDED, USE_MOODYCAMEL, USE_SIMPLE_MC, USE_TBB"
+#error "Define one of: USE_MUTEX_QUEUE, USE_TWO_LOCK_QUEUE, USE_LOCK_FREE_QUEUE, USE_VYUKOV_BOUNDED_QUEUE, USE_SHARDED_VYUKOV_QUEUE, USE_MOODYCAMEL, USE_SIMPLE_CONCURRENT_QUEUE, USE_TBB"
 #endif
 
 // ============================================================
