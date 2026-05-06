@@ -1,0 +1,13 @@
+# Local agent/tool state
+.claw/
+.codex/
+
+# Build outputs
+build/
+*/build/
+*.o
+*.out
+
+# Local binaries that older Makefiles emitted in source directories
+computational_geometry/*_test
+concurrent_queue/test_simple
