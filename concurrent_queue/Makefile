@@ -4,7 +4,7 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -mcx16 -pthread
 CPPFLAGS ?= -Iinclude
 LDFLAGS ?=
-LDLIBS ?= -latomic -ltbb
+LDLIBS ?= -latomic
 
 SRC := benchmarks/bench_queues.cpp
 TEST_SRC := tests/test_queues.cpp
@@ -35,26 +35,31 @@ UBSAN_BENCH_ARGS ?= -p 4 -c 4 -n 50000 -r 1
 SAN_TBB_EXTRA_LDLIBS ?= -ltbb
 SAN_CLEAN_ENV ?= env -u LD_LIBRARY_PATH -u LD_PRELOAD -u TSAN_OPTIONS -u ASAN_OPTIONS -u UBSAN_OPTIONS
 
-QUEUES := mutex_queue two_lock cas_lf dvyukov_mpmc dvyukov_mpmc_sharded moodycamel simple_mc tbb
+DEFAULT_QUEUES := mutex_queue two_lock_queue lock_free_queue vyukov_bounded_queue sharded_vyukov_queue moodycamel simple_concurrent_queue
+OPTIONAL_QUEUES := tbb
+QUEUES := $(DEFAULT_QUEUES) $(OPTIONAL_QUEUES)
 DEPS := $(patsubst %,$(DEP_DIR)/%.d,$(QUEUES))
 
 mutex_queue_DEF := USE_MUTEX_QUEUE
-two_lock_DEF := USE_TWO_LOCK
-cas_lf_DEF := USE_CAS_LF
-dvyukov_mpmc_DEF := USE_DVYUKOV_MPMC
-dvyukov_mpmc_sharded_DEF := USE_DVYUKOV_MPMC_SHARDED
+two_lock_queue_DEF := USE_TWO_LOCK_QUEUE
+lock_free_queue_DEF := USE_LOCK_FREE_QUEUE
+vyukov_bounded_queue_DEF := USE_VYUKOV_BOUNDED_QUEUE
+sharded_vyukov_queue_DEF := USE_SHARDED_VYUKOV_QUEUE
 moodycamel_DEF := USE_MOODYCAMEL
-simple_mc_DEF := USE_SIMPLE_MC
+simple_concurrent_queue_DEF := USE_SIMPLE_CONCURRENT_QUEUE
 tbb_DEF := USE_TBB
+tbb_LDLIBS := -ltbb
 
 SCENARIO_ARGS ?= -p 8 -c 8 -n 200000 -r 5
 SCENARIOS ?= 1:1:1P-1C 4:4:4P-4C 1:4:1P-4C 4:1:4P-1C 8:8:8P-8C
 ITEMS ?= 200000
 ROUNDS ?= 5
 
-.PHONY: all clean run run-% list test test-tsan test-tsan-bench test-tsan-all test-asan-bench test-ubsan-bench test-sanitize-all
+.PHONY: all all-with-tbb clean run run-% list test test-tsan test-tsan-bench test-tsan-all test-asan-bench test-ubsan-bench test-sanitize-all
 
-all: $(addprefix $(OUT_DIR)/bench_,$(QUEUES))
+all: $(addprefix $(OUT_DIR)/bench_,$(DEFAULT_QUEUES))
+
+all-with-tbb: all $(OUT_DIR)/bench_tbb
 
 $(OUT_DIR):
 	mkdir -p $(OUT_DIR)
@@ -64,7 +69,7 @@ $(DEP_DIR): | $(OUT_DIR)
 
 $(OUT_DIR)/bench_%: $(SRC) | $(OUT_DIR) $(DEP_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -MF $(DEP_DIR)/$*.d \
-		-D$($*_DEF) -o $@ $< $(LDFLAGS) $(LDLIBS)
+		-D$($*_DEF) -o $@ $< $(LDFLAGS) $(LDLIBS) $($*_LDLIBS)
 
 $(OUT_DIR)/bench_tsan_%: $(SRC) | $(OUT_DIR)
 	$(CXX) $(CPPFLAGS) $(TSAN_BENCH_CXXFLAGS) -D$($*_DEF) -o $@ $< \
