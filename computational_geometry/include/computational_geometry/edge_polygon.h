@@ -24,7 +24,7 @@ struct Interval {
   }
 };
 
-inline Position PointSegmentPosition(const Point& start, const Point& end, const Point& c) {
+inline Position PointLinePosition(const Point& start, const Point& end, const Point& c) {
   const double cross_product = (end - start).Cross(c - start);
   const int sign = CompareDouble(cross_product);
   if (sign > 0) {
@@ -33,7 +33,7 @@ inline Position PointSegmentPosition(const Point& start, const Point& end, const
   if (sign < 0) {
     return kRight;
   }
-  return kOnSegment;
+  return kCollinear;
 }
 
 class Segment {
@@ -162,7 +162,7 @@ inline std::vector<Point> ConvexHull(std::vector<Point>& points) {
   hull.reserve(points.size());
   for (const auto& point : points) {
     while (hull.size() >= 2) {
-      const Position pos = PointSegmentPosition(hull[hull.size() - 2], hull[hull.size() - 1], point);
+      const Position pos = PointLinePosition(hull[hull.size() - 2], hull[hull.size() - 1], point);
       if (pos != kRight) {
         hull.pop_back();
       } else {
@@ -175,7 +175,7 @@ inline std::vector<Point> ConvexHull(std::vector<Point>& points) {
   const size_t upper_size = hull.size();
   for (auto it = points.rbegin() + 1; it != points.rend(); ++it) {
     while (hull.size() > upper_size) {
-      const Position pos = PointSegmentPosition(hull[hull.size() - 2], hull[hull.size() - 1], *it);
+      const Position pos = PointLinePosition(hull[hull.size() - 2], hull[hull.size() - 1], *it);
       if (pos != kRight) {
         hull.pop_back();
       } else {

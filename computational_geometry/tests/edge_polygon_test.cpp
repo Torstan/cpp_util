@@ -143,20 +143,20 @@ void TestPosition() {
   cg::Point end(2, 2);
 
   cg::Point left(0, 2);
-  AssertEqual(static_cast<int>(cg::PointSegmentPosition(start, end, left)),
+  AssertEqual(static_cast<int>(cg::PointLinePosition(start, end, left)),
               static_cast<int>(cg::kLeft), "左侧点判断");
 
   cg::Point right(2, 0);
-  AssertEqual(static_cast<int>(cg::PointSegmentPosition(start, end, right)),
+  AssertEqual(static_cast<int>(cg::PointLinePosition(start, end, right)),
               static_cast<int>(cg::kRight), "右侧点判断");
 
   cg::Point on_edge(1, 1);
-  AssertEqual(static_cast<int>(cg::PointSegmentPosition(start, end, on_edge)),
-              static_cast<int>(cg::kOnSegment), "边上点判断");
+  AssertEqual(static_cast<int>(cg::PointLinePosition(start, end, on_edge)),
+              static_cast<int>(cg::kCollinear), "共线点判断");
 
   cg::Point extended(3, 3);
-  AssertEqual(static_cast<int>(cg::PointSegmentPosition(start, end, extended)),
-              static_cast<int>(cg::kOnSegment), "延长线上点判断");
+  AssertEqual(static_cast<int>(cg::PointLinePosition(start, end, extended)),
+              static_cast<int>(cg::kCollinear), "延长线上共线点判断");
 }
 
 int main() {

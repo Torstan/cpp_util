@@ -41,7 +41,7 @@ inline bool IsZero(double a) {
 }
 
 enum Position {
-  kOnSegment = 0,
+  kCollinear = 0,
   kLeft = 1,
   kRight = 2
 };
