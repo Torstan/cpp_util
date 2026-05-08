@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <new>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -19,9 +18,7 @@ class ZipList {
 
   ZipList(const ZipList& other) { CopyFrom(other); }
 
-  ZipList(ZipList&& other) noexcept(std::is_nothrow_move_constructible<Entry>::value) {
-    MoveFrom(&other);
-  }
+  ZipList(ZipList&& other) { MoveFrom(&other); }
 
   ZipList& operator=(const ZipList& other) {
     if (this == &other) {
@@ -32,8 +29,7 @@ class ZipList {
     return *this;
   }
 
-  ZipList& operator=(ZipList&& other) noexcept(
-      std::is_nothrow_move_constructible<Entry>::value) {
+  ZipList& operator=(ZipList&& other) {
     if (this == &other) {
       return *this;
     }
