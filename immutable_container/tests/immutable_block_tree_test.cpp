@@ -162,7 +162,7 @@ void TestEraseCreatesNewVersions() {
 
 void TestAdjacentBlocksMergeAfterErase() {
   using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
-                                                       immutable_container::NonAtomicRefCount, 64>;
+                                                       immutable_container::NonAtomicRefCount, 256>;
   Tree tree;
   for (int key = 0; key < 20; ++key) {
     auto next = tree.Insert(key, std::to_string(key));
@@ -205,10 +205,7 @@ void TestIntrusiveRefCountPolicyParameterAndLiveNodes() {
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
                                                        immutable_container::NonAtomicRefCount, 64>;
-  using Entry = std::pair<int, std::string>;
-  constexpr std::size_t target_bytes =
-      64 < sizeof(Entry) * 4 ? sizeof(Entry) * 4 : 64;
-  using Block = immutable_container::ZipList<int, std::string, target_bytes>;
+  using Block = immutable_container::ZipList<int, std::string, 64>;
   const auto live_nodes_before = Tree::DebugLiveNodeCountForTest();
   const auto live_entries_before = Block::DebugLiveEntryCountForTest();
   {

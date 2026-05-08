@@ -22,12 +22,8 @@ template <typename Key, typename Value, typename Comp = std::less<Key>,
           std::size_t TargetBlockBytes = 4096>
 class ImmutableBlockTree {
  private:
-  using Entry = std::pair<Key, Value>;
-  static constexpr std::size_t kMinBlockEntries = 4;
-  static constexpr std::size_t kMinTargetBlockBytes = sizeof(Entry) * kMinBlockEntries;
-  static constexpr std::size_t kEffectiveTargetBlockBytes =
-      TargetBlockBytes < kMinTargetBlockBytes ? kMinTargetBlockBytes : TargetBlockBytes;
-  using Block = ZipList<Key, Value, kEffectiveTargetBlockBytes>;
+  using Block = ZipList<Key, Value, TargetBlockBytes>;
+  using Entry = typename Block::Entry;
 
   struct Node;
   using NodePtr = SharedPtr<const Node>;
