@@ -134,6 +134,41 @@ void TestUpdateAndSetCreateNewVersions() {
   RequireEqual(set_missing.Size(), tree.Size() + 1, "Set missing increases new version size");
 }
 
+void TestBlocksFillAndSplit() {
+  using Tree = immutable_container::ImmutableBlockTree<int, int, std::less<int>,
+                                                       immutable_container::NonAtomicRefCount, 64>;
+  Tree tree;
+  std::vector<int> keys;
+
+  for (int key = 0; key <= 16; key += 2) {
+    auto next = tree.Insert(key, key * 10);
+    Require(next.has_value(), "ordered structural insert succeeds");
+    tree = *next;
+    keys.push_back(key);
+  }
+
+  for (int key = 1; key <= 17; key += 2) {
+    auto next = tree.Insert(key, key * 10);
+    Require(next.has_value(), "interior structural insert succeeds");
+    tree = *next;
+    keys.push_back(key);
+  }
+
+  RequireEqual(tree.Size(), keys.size(), "structural tree size");
+  for (int key : keys) {
+    const int* found = tree.Find(key);
+    Require(found != nullptr, "structural tree finds inserted key after split");
+    RequireEqual(*found, key * 10, "structural tree keeps inserted value after split");
+  }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  const auto stats = tree.DebugStatsForTest();
+  Require(stats.entry_capacity > 1, "structural test uses blocks with spare capacity");
+  Require(stats.node_count < tree.Size(), "block tree stores multiple entries per node");
+  Require(stats.AverageFillRate() > 0.25, "block tree keeps a reasonable average fill rate");
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -142,6 +177,7 @@ int main() {
     TestInsertPersistenceFindDuplicateAndSortedVector();
     TestComparatorDoesNotRequireKeyEquality();
     TestUpdateAndSetCreateNewVersions();
+    TestBlocksFillAndSplit();
     std::cout << "immutable_block_tree_test basic passed\n";
     return 0;
   } catch (const std::exception& e) {
