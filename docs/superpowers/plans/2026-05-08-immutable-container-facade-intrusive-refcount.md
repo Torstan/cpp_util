@@ -553,13 +553,16 @@ void TestNullPointerSupport() {
   Ptr empty;
   Require(!empty, "default constructed SharedPtr is null");
   Require(empty == nullptr, "default constructed SharedPtr compares equal to nullptr");
+  Require(nullptr == empty, "nullptr compares equal to default constructed SharedPtr");
 
   Ptr null = nullptr;
   Require(!null, "nullptr constructed SharedPtr is null");
   Require(null == nullptr, "nullptr constructed SharedPtr compares equal to nullptr");
+  Require(nullptr == null, "nullptr compares equal to nullptr constructed SharedPtr");
 
   null = Ptr::Adopt(new Object(4, &counts));
   Require(null != nullptr, "adopted SharedPtr compares not equal to nullptr");
+  Require(nullptr != null, "nullptr compares not equal to adopted SharedPtr");
   null = nullptr;
   Require(counts.destroyed == 1, "nullptr assignment releases owned target");
 }
@@ -753,6 +756,16 @@ class SharedPtr {
 
   const T* ptr_ = nullptr;
 };
+
+template <typename T>
+bool operator==(std::nullptr_t, const SharedPtr<T>& ptr) {
+  return ptr == nullptr;
+}
+
+template <typename T>
+bool operator!=(std::nullptr_t, const SharedPtr<T>& ptr) {
+  return ptr != nullptr;
+}
 
 }  // namespace immutable_container
 
