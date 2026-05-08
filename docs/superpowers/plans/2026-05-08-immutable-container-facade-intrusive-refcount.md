@@ -500,7 +500,7 @@ void TestAdoptCopyMoveAndDestruction() {
   LifecycleCounts counts;
   {
     Ptr ptr = Ptr::Adopt(new Object(7, &counts));
-    Require(ptr, "Adopt creates non-null SharedPtr");
+    Require(static_cast<bool>(ptr), "Adopt creates non-null SharedPtr");
     Require(ptr->Value() == 7, "SharedPtr dereferences adopted object");
     Require(ptr->Load() == 1, "Adopt does not retain again");
 
