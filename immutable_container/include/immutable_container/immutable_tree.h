@@ -76,7 +76,13 @@ class ImmutableTree {
     return ImmutableTree(*new_root, comp_);
   }
 
-  std::optional<ImmutableTree> Erase(const Key& /*key*/) const { return std::nullopt; }
+  std::optional<ImmutableTree> Erase(const Key& key) const {
+    auto new_root = EraseNode(root_, key);
+    if (!new_root.has_value()) {
+      return std::nullopt;
+    }
+    return ImmutableTree(*new_root, comp_);
+  }
 
   ImmutableTree Set(const Key& key, const Value& value) const {
     return ImmutableTree(SetNode(root_, key, value), comp_);
@@ -172,6 +178,54 @@ class ImmutableTree {
     }
 
     return Balance(MakeNode(node->key, value, node->left, node->right));
+  }
+
+  static NodePtr FindMin(const NodePtr& node) {
+    NodePtr current = node;
+    while (current && current->left) {
+      current = current->left;
+    }
+    return current;
+  }
+
+  NodePtr EraseMin(const NodePtr& node) const {
+    if (!node->left) {
+      return node->right;
+    }
+    return Balance(MakeNode(node->key, node->value, EraseMin(node->left), node->right));
+  }
+
+  std::optional<NodePtr> EraseNode(const NodePtr& node, const Key& key) const {
+    if (!node) {
+      return std::nullopt;
+    }
+
+    if (Less(key, node->key)) {
+      auto new_left = EraseNode(node->left, key);
+      if (!new_left.has_value()) {
+        return std::nullopt;
+      }
+      return Balance(MakeNode(node->key, node->value, *new_left, node->right));
+    }
+
+    if (Less(node->key, key)) {
+      auto new_right = EraseNode(node->right, key);
+      if (!new_right.has_value()) {
+        return std::nullopt;
+      }
+      return Balance(MakeNode(node->key, node->value, node->left, *new_right));
+    }
+
+    if (!node->left) {
+      return node->right;
+    }
+    if (!node->right) {
+      return node->left;
+    }
+
+    NodePtr successor = FindMin(node->right);
+    NodePtr new_right = EraseMin(node->right);
+    return Balance(MakeNode(successor->key, successor->value, node->left, new_right));
   }
 
   static void AppendInOrder(const NodePtr& node, std::vector<std::pair<Key, Value>>* result) {

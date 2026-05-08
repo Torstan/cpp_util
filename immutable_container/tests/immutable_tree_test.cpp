@@ -127,6 +127,51 @@ void TestUpdateAndSetCreateNewVersions() {
   RequireEqual(set_missing.Size(), tree.Size() + 1, "Set missing increases new version size");
 }
 
+void TestEraseCreatesNewVersions() {
+  const auto tree = BuildTree({
+      {4, "four"},
+      {2, "two"},
+      {6, "six"},
+      {1, "one"},
+      {3, "three"},
+      {5, "five"},
+      {7, "seven"},
+  });
+
+  auto missing_erase = tree.Erase(9);
+  Require(!missing_erase.has_value(), "Erase of missing key returns nullopt");
+
+  auto maybe_without_leaf = tree.Erase(1);
+  Require(maybe_without_leaf.has_value(), "Erase leaf succeeds");
+  const auto without_leaf = *maybe_without_leaf;
+  Require(tree.Contains(1), "Erase leaf leaves old version unchanged");
+  Require(!without_leaf.Contains(1), "Erase leaf removes key in new version");
+  RequireEqual(without_leaf.Size(), tree.Size() - 1, "Erase leaf decreases size");
+
+  auto maybe_without_one_child = without_leaf.Erase(2);
+  Require(maybe_without_one_child.has_value(), "Erase one-child node succeeds");
+  const auto without_one_child = *maybe_without_one_child;
+  Require(without_leaf.Contains(2), "Erase one-child leaves previous version unchanged");
+  Require(!without_one_child.Contains(2), "Erase one-child removes key in new version");
+
+  auto maybe_without_two_children = tree.Erase(4);
+  Require(maybe_without_two_children.has_value(), "Erase two-child node succeeds");
+  const auto without_two_children = *maybe_without_two_children;
+  Require(tree.Contains(4), "Erase two-child leaves old version unchanged");
+  Require(!without_two_children.Contains(4), "Erase two-child removes key in new version");
+
+  const std::vector<std::pair<int, std::string>> expected = {
+      {1, "one"},
+      {2, "two"},
+      {3, "three"},
+      {5, "five"},
+      {6, "six"},
+      {7, "seven"},
+  };
+  Require(without_two_children.ToVector() == expected,
+          "Erase two-child keeps sorted key-value order");
+}
+
 }  // namespace
 
 int main() {
@@ -134,6 +179,7 @@ int main() {
   TestInsertPersistenceAndDuplicateFailure();
   TestComparatorDoesNotRequireKeyEquality();
   TestUpdateAndSetCreateNewVersions();
+  TestEraseCreatesNewVersions();
   std::cout << "immutable_tree_test passed\n";
   return 0;
 }
