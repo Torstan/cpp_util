@@ -1,5 +1,5 @@
-#include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,15 +11,13 @@ namespace {
 template <typename T, typename U>
 void RequireEqual(const T& actual, const U& expected, const std::string& message) {
   if (!(actual == expected)) {
-    std::cerr << "FAIL: " << message << "\n";
-    std::exit(1);
+    throw std::runtime_error(message);
   }
 }
 
 void Require(bool condition, const std::string& message) {
   if (!condition) {
-    std::cerr << "FAIL: " << message << "\n";
-    std::exit(1);
+    throw std::runtime_error(message);
   }
 }
 
@@ -230,13 +228,18 @@ void TestSharedNodeObservation() {
 }  // namespace
 
 int main() {
-  TestEmptyTree();
-  TestInsertPersistenceAndDuplicateFailure();
-  TestComparatorDoesNotRequireKeyEquality();
-  TestUpdateAndSetCreateNewVersions();
-  TestEraseCreatesNewVersions();
-  TestAvlBalancingForSortedInput();
-  TestSharedNodeObservation();
-  std::cout << "immutable_tree_test passed\n";
-  return 0;
+  try {
+    TestEmptyTree();
+    TestInsertPersistenceAndDuplicateFailure();
+    TestComparatorDoesNotRequireKeyEquality();
+    TestUpdateAndSetCreateNewVersions();
+    TestEraseCreatesNewVersions();
+    TestAvlBalancingForSortedInput();
+    TestSharedNodeObservation();
+    std::cout << "immutable_tree_test passed\n";
+    return 0;
+  } catch (const std::exception& e) {
+    std::cerr << "FAIL: " << e.what() << "\n";
+    return 1;
+  }
 }
