@@ -1,3 +1,4 @@
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -44,8 +45,12 @@ struct BigValue {
   char bytes[8192]{};
 };
 
+struct MediumValue {
+  char bytes[128]{};
+};
+
 void TestEmptyAndFromSorted() {
-  using ZipList = immutable_container::ZipList<int, std::string, 64>;
+  using ZipList = immutable_container::ZipList<int, std::string, 256>;
   ZipList empty;
   RequireEqual(empty.Count(), std::size_t{0}, "empty ZipList count");
   Require(empty.Capacity() >= 1, "empty ZipList has usable capacity");
@@ -91,7 +96,7 @@ void TestCopyWithInsertUpdateErase() {
 }
 
 void TestSplitAndMerge() {
-  using ZipList = immutable_container::ZipList<int, std::string, 64>;
+  using ZipList = immutable_container::ZipList<int, std::string, 256>;
   std::vector<std::pair<int, std::string>> entries;
   for (int i = 0; i < static_cast<int>(ZipList::DefaultCapacity()); ++i) {
     entries.push_back({i, std::to_string(i)});
@@ -139,6 +144,11 @@ void TestObjectLifetimeAndLargeEntry() {
                "large entry type still has capacity one");
   const auto big = BigZipList::FromSortedEntries({{1, BigValue{}}});
   RequireEqual(big.Count(), std::size_t{1}, "large entry block stores one value");
+
+  using MediumZipList = immutable_container::ZipList<int, MediumValue, 4096>;
+  using MediumEntry = MediumZipList::Entry;
+  RequireEqual(MediumZipList::DefaultCapacity(), 4096 / sizeof(MediumEntry),
+               "medium entry capacity uses entry storage size");
 }
 
 }  // namespace

@@ -219,7 +219,8 @@ class ZipList {
   using Storage = typename std::aligned_storage<sizeof(Entry), alignof(Entry)>::type;
 
   static constexpr std::size_t ComputeCapacity() {
-    return sizeof(Entry) > TargetBytes ? 1 : (TargetBytes / 16 == 0 ? 1 : TargetBytes / 16);
+    const std::size_t raw = TargetBytes / sizeof(Storage);
+    return raw == 0 ? 1 : raw;
   }
 
   Entry* EntryAt(std::size_t index) {
