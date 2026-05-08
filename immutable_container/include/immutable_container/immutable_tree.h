@@ -110,7 +110,48 @@ class ImmutableTree {
     return std::make_shared<Node>(key, value, std::move(left), std::move(right), height, size);
   }
 
-  NodePtr Balance(const NodePtr& node) const { return node; }
+  static int BalanceFactor(const NodePtr& node) {
+    return node ? Height(node->left) - Height(node->right) : 0;
+  }
+
+  static NodePtr RotateLeft(const NodePtr& node) {
+    NodePtr pivot = node->right;
+    NodePtr moved_subtree = pivot->left;
+    NodePtr new_left = MakeNode(node->key, node->value, node->left, moved_subtree);
+    return MakeNode(pivot->key, pivot->value, new_left, pivot->right);
+  }
+
+  static NodePtr RotateRight(const NodePtr& node) {
+    NodePtr pivot = node->left;
+    NodePtr moved_subtree = pivot->right;
+    NodePtr new_right = MakeNode(node->key, node->value, moved_subtree, node->right);
+    return MakeNode(pivot->key, pivot->value, pivot->left, new_right);
+  }
+
+  NodePtr Balance(const NodePtr& node) const {
+    if (!node) {
+      return nullptr;
+    }
+
+    const int factor = BalanceFactor(node);
+    if (factor > 1) {
+      if (BalanceFactor(node->left) < 0) {
+        NodePtr new_left = RotateLeft(node->left);
+        return RotateRight(MakeNode(node->key, node->value, new_left, node->right));
+      }
+      return RotateRight(node);
+    }
+
+    if (factor < -1) {
+      if (BalanceFactor(node->right) > 0) {
+        NodePtr new_right = RotateRight(node->right);
+        return RotateLeft(MakeNode(node->key, node->value, node->left, new_right));
+      }
+      return RotateLeft(node);
+    }
+
+    return node;
+  }
 
   std::optional<NodePtr> InsertNode(const NodePtr& node, const Key& key,
                                     const Value& value) const {
