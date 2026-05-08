@@ -22,8 +22,12 @@ template <typename Key, typename Value, typename Comp = std::less<Key>,
           std::size_t TargetBlockBytes = 4096>
 class ImmutableBlockTree {
  private:
-  using Block = ZipList<Key, Value, TargetBlockBytes>;
-  using Entry = typename Block::Entry;
+  using Entry = std::pair<Key, Value>;
+  static constexpr std::size_t kMinBlockEntries = 4;
+  static constexpr std::size_t kMinTargetBlockBytes = sizeof(Entry) * kMinBlockEntries;
+  static constexpr std::size_t kEffectiveTargetBlockBytes =
+      TargetBlockBytes < kMinTargetBlockBytes ? kMinTargetBlockBytes : TargetBlockBytes;
+  using Block = ZipList<Key, Value, kEffectiveTargetBlockBytes>;
 
   struct Node;
   using NodePtr = SharedPtr<const Node>;
@@ -112,6 +116,14 @@ class ImmutableBlockTree {
 
   std::optional<ImmutableBlockTree> Update(const Key& key, const Value& value) const {
     auto new_root = UpdateNode(root_, key, value);
+    if (!new_root.has_value()) {
+      return std::nullopt;
+    }
+    return ImmutableBlockTree(*new_root, comp_);
+  }
+
+  std::optional<ImmutableBlockTree> Erase(const Key& key) const {
+    auto new_root = EraseNode(root_, key);
     if (!new_root.has_value()) {
       return std::nullopt;
     }
@@ -221,9 +233,61 @@ class ImmutableBlockTree {
     return Balance(MakeNode(std::move(block), std::move(left), std::move(right)));
   }
 
+  static NodePtr FindMin(const NodePtr& node) {
+    NodePtr current = node;
+    while (current->left) {
+      current = current->left;
+    }
+    return current;
+  }
+
+  static NodePtr FindMax(const NodePtr& node) {
+    NodePtr current = node;
+    while (current->right) {
+      current = current->right;
+    }
+    return current;
+  }
+
+  NodePtr EraseMinNode(const NodePtr& node) const {
+    if (!node->left) {
+      return node->right;
+    }
+    return NormalizeNode(node->block, EraseMinNode(node->left), node->right);
+  }
+
+  NodePtr EraseMaxNode(const NodePtr& node) const {
+    if (!node->right) {
+      return node->left;
+    }
+    return NormalizeNode(node->block, node->left, EraseMaxNode(node->right));
+  }
+
+  NodePtr NormalizeNode(Block block, NodePtr left, NodePtr right) const {
+    while (left) {
+      NodePtr predecessor = FindMax(left);
+      if (!Block::CanMerge(predecessor->block, block)) {
+        break;
+      }
+      block = Block::Merged(predecessor->block, block);
+      left = EraseMaxNode(left);
+    }
+
+    while (right) {
+      NodePtr successor = FindMin(right);
+      if (!Block::CanMerge(block, successor->block)) {
+        break;
+      }
+      block = Block::Merged(block, successor->block);
+      right = EraseMinNode(right);
+    }
+
+    return MakeBalanced(std::move(block), std::move(left), std::move(right));
+  }
+
   NodePtr BuildSplitNode(std::pair<Block, Block> split, NodePtr left, NodePtr right) const {
-    NodePtr split_right = MakeBalanced(std::move(split.second), nullptr, std::move(right));
-    return MakeBalanced(std::move(split.first), std::move(left), std::move(split_right));
+    NodePtr split_right = NormalizeNode(std::move(split.second), nullptr, std::move(right));
+    return NormalizeNode(std::move(split.first), std::move(left), std::move(split_right));
   }
 
   NodePtr InsertInNodeBlock(const NodePtr& node, std::size_t index, const Key& key,
@@ -251,7 +315,7 @@ class ImmutableBlockTree {
       if (!new_left.has_value()) {
         return std::nullopt;
       }
-      return MakeBalanced(node->block, *new_left, node->right);
+      return NormalizeNode(node->block, *new_left, node->right);
     }
 
     if (Less(node->block.Back().first, key)) {
@@ -262,7 +326,7 @@ class ImmutableBlockTree {
       if (!new_right.has_value()) {
         return std::nullopt;
       }
-      return MakeBalanced(node->block, node->left, *new_right);
+      return NormalizeNode(node->block, node->left, *new_right);
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
@@ -301,6 +365,48 @@ class ImmutableBlockTree {
     }
 
     return MakeBalanced(node->block.WithUpdated(index, value), node->left, node->right);
+  }
+
+  std::optional<NodePtr> EraseNode(const NodePtr& node, const Key& key) const {
+    if (!node) {
+      return std::nullopt;
+    }
+
+    if (Less(key, node->block.Front().first)) {
+      auto new_left = EraseNode(node->left, key);
+      if (!new_left.has_value()) {
+        return std::nullopt;
+      }
+      return NormalizeNode(node->block, *new_left, node->right);
+    }
+
+    if (Less(node->block.Back().first, key)) {
+      auto new_right = EraseNode(node->right, key);
+      if (!new_right.has_value()) {
+        return std::nullopt;
+      }
+      return NormalizeNode(node->block, node->left, *new_right);
+    }
+
+    const std::size_t index = node->block.LowerBound(key, comp_);
+    if (index == node->block.Count() || !Equivalent(node->block[index].first, key)) {
+      return std::nullopt;
+    }
+
+    if (node->block.Count() > 1) {
+      return NormalizeNode(node->block.WithErased(index), node->left, node->right);
+    }
+
+    if (!node->left) {
+      return node->right;
+    }
+    if (!node->right) {
+      return node->left;
+    }
+
+    NodePtr successor = FindMin(node->right);
+    NodePtr new_right = EraseMinNode(node->right);
+    return NormalizeNode(successor->block, node->left, std::move(new_right));
   }
 
   NodePtr SetNode(const NodePtr& node, const Key& key, const Value& value) const {
