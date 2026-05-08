@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -93,6 +94,8 @@ std::size_t ReadRepetitions(std::size_t size) {
   return std::max<std::size_t>(1, target_lookups / size);
 }
 
+void PrintJemallocStats(const std::string& label);
+
 template <typename Tree>
 void RunCase(const std::string& name, const std::string& pattern, std::size_t size) {
   const std::vector<int> keys = MakeKeys(size, pattern);
@@ -138,6 +141,7 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
             << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us;
   AppendDebugStats(tree, std::cout);
   std::cout << "\n";
+  PrintJemallocStats(name + "_" + pattern + "_" + std::to_string(size));
 }
 
 #ifdef IMMUTABLE_CONTAINER_USE_JEMALLOC
@@ -172,7 +176,6 @@ void RunTree(const std::string& name) {
   for (const char* pattern : {"sorted", "random"}) {
     for (std::size_t size : {100, 1000, 10000}) {
       RunCase<Tree>(name, pattern, size);
-      PrintJemallocStats(name + "_" + pattern + "_" + std::to_string(size));
     }
   }
 }
