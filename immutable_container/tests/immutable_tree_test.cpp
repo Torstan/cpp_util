@@ -200,6 +200,33 @@ void TestAvlBalancingForSortedInput() {
   Require(right_left.Height() <= 2, "right-left rotation balances height");
 }
 
+void TestSharedNodeObservation() {
+  const auto tree = BuildTree({
+      {4, "four"},
+      {2, "two"},
+      {6, "six"},
+      {1, "one"},
+      {3, "three"},
+      {5, "five"},
+      {7, "seven"},
+  });
+
+  const auto copied = tree;
+  Require(tree.DebugRootUseCountForTest() >= 2, "copying a tree shares root pointer");
+
+  auto maybe_inserted = tree.Insert(8, "eight");
+  Require(maybe_inserted.has_value(), "insert for sharing test succeeds");
+  const auto inserted = *maybe_inserted;
+  Require(inserted.DebugSharedNodeCountForTest(tree) > 0,
+          "new version shares at least one untouched subtree node");
+
+  auto maybe_updated = tree.Update(7, "SEVEN");
+  Require(maybe_updated.has_value(), "update for sharing test succeeds");
+  const auto updated = *maybe_updated;
+  Require(updated.DebugSharedNodeCountForTest(tree) > 0,
+          "updated version shares at least one untouched subtree node");
+}
+
 }  // namespace
 
 int main() {
@@ -209,6 +236,7 @@ int main() {
   TestUpdateAndSetCreateNewVersions();
   TestEraseCreatesNewVersions();
   TestAvlBalancingForSortedInput();
+  TestSharedNodeObservation();
   std::cout << "immutable_tree_test passed\n";
   return 0;
 }

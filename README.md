@@ -8,6 +8,8 @@ This repository contains small C++17 utility projects and experiments.
   range-tree tests, and a generic KD-tree.
 - `concurrent_queue`: educational and reference concurrent queue
   implementations with functional tests and benchmark drivers.
+- `immutable_container`: immutable data structures, starting with a
+  persistent AVL-backed ordered key-value tree.
 
 ## Build And Test
 

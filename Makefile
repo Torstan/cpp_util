@@ -1,4 +1,4 @@
-SUBDIRS := computational_geometry concurrent_queue
+SUBDIRS := computational_geometry concurrent_queue immutable_container
 
 .PHONY: all test clean lint test-lint $(SUBDIRS)
 
