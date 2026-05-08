@@ -471,28 +471,25 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+struct LifecycleCounts {
+  int constructed = 0;
+  int destroyed = 0;
+};
+
 template <typename CounterPolicy>
 class CountingObject : public CounterPolicy::Counter {
  public:
-  explicit CountingObject(int value) : value_(value) { ++constructed_; }
+  CountingObject(int value, LifecycleCounts* counts) : value_(value), counts_(counts) {
+    ++counts_->constructed;
+  }
 
-  ~CountingObject() { ++destroyed_; }
+  ~CountingObject() { ++counts_->destroyed; }
 
   int Value() const { return value_; }
 
-  static void ResetCounts() {
-    constructed_ = 0;
-    destroyed_ = 0;
-  }
-
-  static int Constructed() { return constructed_; }
-
-  static int Destroyed() { return destroyed_; }
-
  private:
   int value_;
-  inline static int constructed_ = 0;
-  inline static int destroyed_ = 0;
+  LifecycleCounts* counts_;
 };
 
 template <typename CounterPolicy>
@@ -500,9 +497,9 @@ void TestAdoptCopyMoveAndDestruction() {
   using Object = CountingObject<CounterPolicy>;
   using Ptr = immutable_container::SharedPtr<const Object>;
 
-  Object::ResetCounts();
+  LifecycleCounts counts;
   {
-    Ptr ptr = Ptr::Adopt(new Object(7));
+    Ptr ptr = Ptr::Adopt(new Object(7, &counts));
     Require(ptr, "Adopt creates non-null SharedPtr");
     Require(ptr->Value() == 7, "SharedPtr dereferences adopted object");
     Require(ptr->Load() == 1, "Adopt does not retain again");
@@ -517,10 +514,10 @@ void TestAdoptCopyMoveAndDestruction() {
     }
 
     Require(ptr->Load() == 1, "destroying copied pointer releases");
-    Require(Object::Constructed() == 1, "object constructed once");
-    Require(Object::Destroyed() == 0, "object not destroyed before final release");
+    Require(counts.constructed == 1, "object constructed once");
+    Require(counts.destroyed == 0, "object not destroyed before final release");
   }
-  Require(Object::Destroyed() == 1, "final SharedPtr release destroys object once");
+  Require(counts.destroyed == 1, "final SharedPtr release destroys object once");
 }
 
 template <typename CounterPolicy>
@@ -528,23 +525,23 @@ void TestAssignmentReleasesOldTarget() {
   using Object = CountingObject<CounterPolicy>;
   using Ptr = immutable_container::SharedPtr<const Object>;
 
-  Object::ResetCounts();
+  LifecycleCounts counts;
   {
-    Ptr first = Ptr::Adopt(new Object(1));
-    Ptr second = Ptr::Adopt(new Object(2));
-    Require(Object::Constructed() == 2, "two objects constructed");
+    Ptr first = Ptr::Adopt(new Object(1, &counts));
+    Ptr second = Ptr::Adopt(new Object(2, &counts));
+    Require(counts.constructed == 2, "two objects constructed");
 
     first = second;
     Require(second->Load() == 2, "copy assignment retains new target");
-    Require(Object::Destroyed() == 1, "copy assignment releases old target");
+    Require(counts.destroyed == 1, "copy assignment releases old target");
 
-    Ptr third = Ptr::Adopt(new Object(3));
+    Ptr third = Ptr::Adopt(new Object(3, &counts));
     second = std::move(third);
     Require(!third, "move assignment clears source");
     Require(second->Value() == 3, "move assignment transfers new target");
-    Require(Object::Destroyed() == 1, "old shared target remains alive through first");
+    Require(counts.destroyed == 1, "old shared target remains alive through first");
   }
-  Require(Object::Destroyed() == 3, "all assignment targets destroyed after scope");
+  Require(counts.destroyed == 3, "all assignment targets destroyed after scope");
 }
 
 template <typename CounterPolicy>
@@ -552,7 +549,7 @@ void TestNullPointerSupport() {
   using Object = CountingObject<CounterPolicy>;
   using Ptr = immutable_container::SharedPtr<const Object>;
 
-  Object::ResetCounts();
+  LifecycleCounts counts;
   Ptr empty;
   Require(!empty, "default constructed SharedPtr is null");
   Require(empty == nullptr, "default constructed SharedPtr compares equal to nullptr");
@@ -561,10 +558,10 @@ void TestNullPointerSupport() {
   Require(!null, "nullptr constructed SharedPtr is null");
   Require(null == nullptr, "nullptr constructed SharedPtr compares equal to nullptr");
 
-  null = Ptr::Adopt(new Object(4));
+  null = Ptr::Adopt(new Object(4, &counts));
   Require(null != nullptr, "adopted SharedPtr compares not equal to nullptr");
   null = nullptr;
-  Require(Object::Destroyed() == 1, "nullptr assignment releases owned target");
+  Require(counts.destroyed == 1, "nullptr assignment releases owned target");
 }
 
 }  // namespace
