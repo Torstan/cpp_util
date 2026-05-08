@@ -212,10 +212,20 @@ class ImmutableBlockTree {
     return Balance(MakeNode(std::move(block), std::move(left), std::move(right)));
   }
 
-  NodePtr BuildSplitNode(const std::pair<Block, Block>& split, NodePtr left,
-                         NodePtr right) const {
-    NodePtr split_right = MakeBalanced(split.second, nullptr, std::move(right));
-    return MakeBalanced(split.first, std::move(left), std::move(split_right));
+  NodePtr BuildSplitNode(std::pair<Block, Block> split, NodePtr left, NodePtr right) const {
+    NodePtr split_right = MakeBalanced(std::move(split.second), nullptr, std::move(right));
+    return MakeBalanced(std::move(split.first), std::move(left), std::move(split_right));
+  }
+
+  NodePtr InsertInNodeBlock(const NodePtr& node, std::size_t index, const Key& key,
+                            const Value& value) const {
+    if (!node->block.Full()) {
+      return MakeBalanced(node->block.WithInserted(index, key, value), node->left,
+                          node->right);
+    }
+
+    return BuildSplitNode(node->block.SplitWithInserted(index, key, value), node->left,
+                          node->right);
   }
 
   std::optional<NodePtr> InsertNode(const NodePtr& node, const Key& key,
@@ -225,6 +235,9 @@ class ImmutableBlockTree {
     }
 
     if (Less(key, node->block.Front().first)) {
+      if (!node->left) {
+        return InsertInNodeBlock(node, 0, key, value);
+      }
       auto new_left = InsertNode(node->left, key, value);
       if (!new_left.has_value()) {
         return std::nullopt;
@@ -233,6 +246,9 @@ class ImmutableBlockTree {
     }
 
     if (Less(node->block.Back().first, key)) {
+      if (!node->right) {
+        return InsertInNodeBlock(node, node->block.Count(), key, value);
+      }
       auto new_right = InsertNode(node->right, key, value);
       if (!new_right.has_value()) {
         return std::nullopt;
@@ -245,13 +261,7 @@ class ImmutableBlockTree {
       return std::nullopt;
     }
 
-    if (!node->block.Full()) {
-      return MakeBalanced(node->block.WithInserted(index, key, value), node->left,
-                          node->right);
-    }
-
-    return BuildSplitNode(node->block.SplitWithInserted(index, key, value), node->left,
-                          node->right);
+    return InsertInNodeBlock(node, index, key, value);
   }
 
   std::optional<NodePtr> UpdateNode(const NodePtr& node, const Key& key,
@@ -290,10 +300,16 @@ class ImmutableBlockTree {
     }
 
     if (Less(key, node->block.Front().first)) {
+      if (!node->left) {
+        return InsertInNodeBlock(node, 0, key, value);
+      }
       return MakeBalanced(node->block, SetNode(node->left, key, value), node->right);
     }
 
     if (Less(node->block.Back().first, key)) {
+      if (!node->right) {
+        return InsertInNodeBlock(node, node->block.Count(), key, value);
+      }
       return MakeBalanced(node->block, node->left, SetNode(node->right, key, value));
     }
 
@@ -302,13 +318,7 @@ class ImmutableBlockTree {
       return MakeBalanced(node->block.WithUpdated(index, value), node->left, node->right);
     }
 
-    if (!node->block.Full()) {
-      return MakeBalanced(node->block.WithInserted(index, key, value), node->left,
-                          node->right);
-    }
-
-    return BuildSplitNode(node->block.SplitWithInserted(index, key, value), node->left,
-                          node->right);
+    return InsertInNodeBlock(node, index, key, value);
   }
 
   static void AppendInOrder(const NodePtr& node, std::vector<std::pair<Key, Value>>* result) {
