@@ -172,6 +172,34 @@ void TestEraseCreatesNewVersions() {
           "Erase two-child keeps sorted key-value order");
 }
 
+void TestAvlBalancingForSortedInput() {
+  immutable_container::ImmutableTree<int, std::string> tree;
+  for (int i = 1; i <= 100; ++i) {
+    auto next = tree.Insert(i, std::to_string(i));
+    Require(next.has_value(), "sorted Insert succeeds");
+    tree = *next;
+  }
+
+  RequireEqual(tree.Size(), std::size_t{100}, "sorted insertion size");
+  Require(tree.Height() <= 16, "AVL height remains logarithmic for sorted insertion");
+  RequireEqual(*tree.Find(1), std::string("1"), "AVL tree finds first key");
+  RequireEqual(*tree.Find(50), std::string("50"), "AVL tree finds middle key");
+  RequireEqual(*tree.Find(100), std::string("100"), "AVL tree finds last key");
+
+  const auto left_right = BuildTree({{3, "three"}, {1, "one"}, {2, "two"}});
+  const std::vector<std::pair<int, std::string>> expected_lr = {
+      {1, "one"},
+      {2, "two"},
+      {3, "three"},
+  };
+  Require(left_right.ToVector() == expected_lr, "left-right rotation preserves order");
+  Require(left_right.Height() <= 2, "left-right rotation balances height");
+
+  const auto right_left = BuildTree({{1, "one"}, {3, "three"}, {2, "two"}});
+  Require(right_left.ToVector() == expected_lr, "right-left rotation preserves order");
+  Require(right_left.Height() <= 2, "right-left rotation balances height");
+}
+
 }  // namespace
 
 int main() {
@@ -180,6 +208,7 @@ int main() {
   TestComparatorDoesNotRequireKeyEquality();
   TestUpdateAndSetCreateNewVersions();
   TestEraseCreatesNewVersions();
+  TestAvlBalancingForSortedInput();
   std::cout << "immutable_tree_test passed\n";
   return 0;
 }
