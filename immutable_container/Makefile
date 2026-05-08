@@ -21,7 +21,7 @@ all: $(TEST_BIN)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(TEST_BIN): $(TEST_SRC) $(HEADER) | $(BUILD_DIR)
+$(TEST_BIN): $(TEST_SRC) $(HEADER) Makefile | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TEST_SRC) -o $@
 
 test: all
