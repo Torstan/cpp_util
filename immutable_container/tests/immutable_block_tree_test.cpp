@@ -1,5 +1,7 @@
 #include <functional>
 #include <iostream>
+#include <map>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -296,6 +298,54 @@ void TestSharedNodeObservation() {
 #endif
 }
 
+void TestRandomizedMapModelMaintainsInvariants() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
+                                                       immutable_container::NonAtomicRefCount,
+                                                       1024>;
+  Tree tree;
+  std::map<int, std::string> expected;
+  std::mt19937 rng(1);
+
+  for (int step = 0; step < 2000; ++step) {
+    const int key = static_cast<int>(rng() % 300);
+    const int operation = static_cast<int>(rng() % 3);
+    const std::string value = std::to_string(key) + ":" + std::to_string(step);
+
+    if (operation == 0) {
+      auto next = tree.Insert(key, value);
+      const auto inserted = expected.emplace(key, value);
+      Require(next.has_value() == inserted.second,
+              "randomized Insert result matches map at step " + std::to_string(step));
+      if (next.has_value()) {
+        tree = *next;
+      }
+    } else if (operation == 1) {
+      tree = tree.Set(key, value);
+      expected[key] = value;
+    } else {
+      auto next = tree.Erase(key);
+      const bool erased = expected.erase(key) != 0;
+      Require(next.has_value() == erased,
+              "randomized Erase result matches map at step " + std::to_string(step));
+      if (next.has_value()) {
+        tree = *next;
+      }
+    }
+
+    std::vector<std::pair<int, std::string>> expected_vector;
+    expected_vector.reserve(expected.size());
+    for (const auto& item : expected) {
+      expected_vector.push_back(item);
+    }
+    Require(tree.ToVector() == expected_vector,
+            "randomized ToVector matches map at step " + std::to_string(step));
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+    Require(tree.DebugValidateInvariantsForTest(),
+            "randomized tree invariants hold at step " + std::to_string(step));
+#endif
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -309,6 +359,7 @@ int main() {
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestSplitCreatesMultipleBlocksAndStats();
     TestSharedNodeObservation();
+    TestRandomizedMapModelMaintainsInvariants();
     std::cout << "immutable_block_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {

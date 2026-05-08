@@ -159,6 +159,10 @@ class ImmutableBlockTree {
     }
     return stats;
   }
+
+  bool DebugValidateInvariantsForTest() const {
+    return ValidateInvariants(root_, nullptr, nullptr).valid;
+  }
 #endif
 
  private:
@@ -229,6 +233,20 @@ class ImmutableBlockTree {
     return Balance(MakeNode(std::move(block), std::move(left), std::move(right)));
   }
 
+  NodePtr JoinNode(Block block, NodePtr left, NodePtr right) const {
+    if (Height(left) > Height(right) + 1) {
+      NodePtr joined_right = JoinNode(std::move(block), left->right, std::move(right));
+      return Balance(MakeNode(left->block, left->left, std::move(joined_right)));
+    }
+
+    if (Height(right) > Height(left) + 1) {
+      NodePtr joined_left = JoinNode(std::move(block), std::move(left), right->left);
+      return Balance(MakeNode(right->block, std::move(joined_left), right->right));
+    }
+
+    return MakeBalanced(std::move(block), std::move(left), std::move(right));
+  }
+
   static NodePtr FindMin(const NodePtr& node) {
     NodePtr current = node;
     while (current->left) {
@@ -278,7 +296,7 @@ class ImmutableBlockTree {
       right = EraseMinNode(right);
     }
 
-    return MakeBalanced(std::move(block), std::move(left), std::move(right));
+    return JoinNode(std::move(block), std::move(left), std::move(right));
   }
 
   NodePtr BuildSplitNode(std::pair<Block, Block> split, NodePtr left, NodePtr right) const {
@@ -414,14 +432,14 @@ class ImmutableBlockTree {
       if (!node->left) {
         return InsertInNodeBlock(node, 0, key, value);
       }
-      return MakeBalanced(node->block, SetNode(node->left, key, value), node->right);
+      return NormalizeNode(node->block, SetNode(node->left, key, value), node->right);
     }
 
     if (Less(node->block.Back().first, key)) {
       if (!node->right) {
         return InsertInNodeBlock(node, node->block.Count(), key, value);
       }
-      return MakeBalanced(node->block, node->left, SetNode(node->right, key, value));
+      return NormalizeNode(node->block, node->left, SetNode(node->right, key, value));
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
@@ -442,6 +460,53 @@ class ImmutableBlockTree {
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  struct DebugValidationResult {
+    bool valid = true;
+    int height = 0;
+    std::size_t size = 0;
+  };
+
+  DebugValidationResult ValidateInvariants(const NodePtr& node, const Key* min_key,
+                                           const Key* max_key) const {
+    if (!node) {
+      return {};
+    }
+
+    DebugValidationResult result;
+    if (node->block.Empty()) {
+      result.valid = false;
+      return result;
+    }
+
+    if (min_key != nullptr && !Less(*min_key, node->block.Front().first)) {
+      result.valid = false;
+    }
+    if (max_key != nullptr && !Less(node->block.Back().first, *max_key)) {
+      result.valid = false;
+    }
+    for (std::size_t index = 1; index < node->block.Count(); ++index) {
+      if (!Less(node->block[index - 1].first, node->block[index].first)) {
+        result.valid = false;
+      }
+    }
+
+    const auto left =
+        ValidateInvariants(node->left, min_key, &node->block.Front().first);
+    const auto right =
+        ValidateInvariants(node->right, &node->block.Back().first, max_key);
+    const int expected_height = 1 + std::max(left.height, right.height);
+    const std::size_t expected_size = node->block.Count() + left.size + right.size;
+    const int height_delta =
+        left.height > right.height ? left.height - right.height : right.height - left.height;
+
+    result.height = expected_height;
+    result.size = expected_size;
+    result.valid = result.valid && left.valid && right.valid &&
+                   node->height == expected_height && node->size == expected_size &&
+                   height_delta <= 1;
+    return result;
+  }
+
   static void CollectStats(const NodePtr& node, DebugStats* stats) {
     if (!node) {
       return;
