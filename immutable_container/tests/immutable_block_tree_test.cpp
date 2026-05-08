@@ -134,6 +134,104 @@ void TestUpdateAndSetCreateNewVersions() {
   RequireEqual(set_missing.Size(), tree.Size() + 1, "Set missing increases new version size");
 }
 
+void TestEraseCreatesNewVersions() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string>;
+  const auto tree = BuildTree<Tree>({
+      {4, "four"}, {2, "two"}, {6, "six"}, {1, "one"},
+      {3, "three"}, {5, "five"}, {7, "seven"},
+  });
+
+  auto missing = tree.Erase(9);
+  Require(!missing.has_value(), "Erase of missing key returns nullopt");
+
+  auto maybe_erased = tree.Erase(4);
+  Require(maybe_erased.has_value(), "Erase of existing key succeeds");
+  const auto erased = *maybe_erased;
+
+  Require(tree.Contains(4), "Erase leaves old version unchanged");
+  Require(!erased.Contains(4), "Erase removes key from new version");
+  RequireEqual(tree.Size(), std::size_t{7}, "old version size remains unchanged after Erase");
+  RequireEqual(erased.Size(), std::size_t{6}, "Erase decreases new version size");
+
+  const std::vector<std::pair<int, std::string>> expected = {
+      {1, "one"}, {2, "two"}, {3, "three"},
+      {5, "five"}, {6, "six"}, {7, "seven"},
+  };
+  Require(erased.ToVector() == expected, "Erase keeps remaining values sorted");
+}
+
+void TestAdjacentBlocksMergeAfterErase() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
+                                                       immutable_container::NonAtomicRefCount, 64>;
+  Tree tree;
+  for (int key = 0; key < 20; ++key) {
+    auto next = tree.Insert(key, std::to_string(key));
+    Require(next.has_value(), "merge setup insert succeeds");
+    tree = *next;
+  }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  const auto before = tree.DebugStatsForTest();
+  Require(before.node_count > 1, "merge setup has multiple block nodes");
+#endif
+
+  for (int key = 19; key >= 3; --key) {
+    auto next = tree.Erase(key);
+    Require(next.has_value(), "ordered erase succeeds");
+    tree = *next;
+  }
+
+  const std::vector<std::pair<int, std::string>> expected = {
+      {0, "0"}, {1, "1"}, {2, "2"},
+  };
+  Require(tree.ToVector() == expected, "adjacent merge erase keeps remaining entries");
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  const auto after = tree.DebugStatsForTest();
+  RequireEqual(after.entry_count, std::size_t{3}, "merged tree keeps three entries");
+  RequireEqual(after.node_count, std::size_t{1}, "adjacent blocks merge into one node");
+#endif
+}
+
+void TestIntrusiveRefCountPolicyParameterAndLiveNodes() {
+  using AtomicTree = immutable_container::ImmutableBlockTree<
+      int, std::string, std::less<int>, immutable_container::AtomicRefCount, 64>;
+  AtomicTree atomic_tree;
+  auto maybe_atomic = atomic_tree.Insert(1, "one");
+  Require(maybe_atomic.has_value(), "atomic ref count tree insert succeeds");
+  atomic_tree = *maybe_atomic;
+  RequireEqual(*atomic_tree.Find(1), std::string("one"), "atomic ref count tree find succeeds");
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
+                                                       immutable_container::NonAtomicRefCount, 64>;
+  using Entry = std::pair<int, std::string>;
+  constexpr std::size_t target_bytes =
+      64 < sizeof(Entry) * 4 ? sizeof(Entry) * 4 : 64;
+  using Block = immutable_container::ZipList<int, std::string, target_bytes>;
+  const auto live_nodes_before = Tree::DebugLiveNodeCountForTest();
+  const auto live_entries_before = Block::DebugLiveEntryCountForTest();
+  {
+    Tree tree;
+    for (int key = 0; key < 20; ++key) {
+      auto next = tree.Insert(key, std::to_string(key));
+      Require(next.has_value(), "live-count setup insert succeeds");
+      tree = *next;
+    }
+    for (int key = 19; key >= 3; --key) {
+      auto next = tree.Erase(key);
+      Require(next.has_value(), "live-count erase succeeds");
+      tree = *next;
+    }
+    RequireEqual(tree.Size(), std::size_t{3}, "live-count tree erases entries");
+  }
+  RequireEqual(Tree::DebugLiveNodeCountForTest(), live_nodes_before,
+               "block tree live node count returns after scope");
+  RequireEqual(Block::DebugLiveEntryCountForTest(), live_entries_before,
+               "ZipList live entry count returns after scope");
+#endif
+}
+
 void TestSplitCreatesMultipleBlocksAndStats() {
   using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
                                                        immutable_container::NonAtomicRefCount, 64>;
@@ -209,9 +307,12 @@ int main() {
     TestInsertPersistenceFindDuplicateAndSortedVector();
     TestComparatorDoesNotRequireKeyEquality();
     TestUpdateAndSetCreateNewVersions();
+    TestEraseCreatesNewVersions();
+    TestAdjacentBlocksMergeAfterErase();
+    TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestSplitCreatesMultipleBlocksAndStats();
     TestSharedNodeObservation();
-    std::cout << "immutable_block_tree_test split passed\n";
+    std::cout << "immutable_block_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "FAIL: " << e.what() << "\n";
