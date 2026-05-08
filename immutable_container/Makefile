@@ -4,8 +4,13 @@ CPPFLAGS ?= -Iinclude -DIMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 
 BUILD_DIR := build
 TEST_DIR := tests
+BENCH_DIR := benchmarks
 TEST_SRCS := $(wildcard $(TEST_DIR)/*_test.cpp)
 TEST_BINS := $(patsubst $(TEST_DIR)/%.cpp,$(BUILD_DIR)/%,$(TEST_SRCS))
+BENCH_SRCS := $(wildcard $(BENCH_DIR)/*.cpp)
+BENCH_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%,$(BENCH_SRCS))
+JEMALLOC_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%_jemalloc,$(BENCH_SRCS))
+JEMALLOC_LIBS ?= -ljemalloc
 HEADERS := $(wildcard include/immutable_container/*.h)
 LINT_CPP_SRCS := $(TEST_SRCS)
 LINT_DIRS := include $(TEST_DIR)
@@ -14,7 +19,7 @@ CLANG_TIDY_FLAGS ?= --warnings-as-errors=clang-analyzer-core.StackAddressEscape
 CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
 CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem
 
-.PHONY: all test clean lint
+.PHONY: all test bench bench-jemalloc clean lint
 
 all: $(TEST_BINS)
 
@@ -24,9 +29,25 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%: $(TEST_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
+$(BUILD_DIR)/bench_%: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+$(BUILD_DIR)/bench_%_jemalloc: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LIBS)
+
 test: all
 	@for test_bin in $(TEST_BINS); do \
 		./$$test_bin; \
+	done
+
+bench: $(BENCH_BINS)
+	@for bench_bin in $(BENCH_BINS); do \
+		./$$bench_bin; \
+	done
+
+bench-jemalloc: $(JEMALLOC_BINS)
+	@for bench_bin in $(JEMALLOC_BINS); do \
+		./$$bench_bin; \
 	done
 
 lint:
