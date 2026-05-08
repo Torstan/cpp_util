@@ -38,6 +38,33 @@ the key and does not mutate the receiver.
 `ImmutableTree<Key, Value, Comp, RefCountPolicy>` remains available as the
 lower-level persistent AVL ordered tree used by `ImtMap` and `ImtSet`.
 
+## Experimental ImmutableBlockTree
+
+`ImmutableBlockTree<Key, Value, Comp, RefCountPolicy, TargetBlockBytes>` is an
+experimental persistent ordered tree that stores multiple sorted entries per AVL
+node. It is available for measurement and iteration, but it does not replace
+`ImmutableTree`, `ImtMap`, or `ImtSet`.
+
+The benchmark target compares the current single-entry `ImmutableTree` against
+2048-byte and 4096-byte `ImmutableBlockTree` configurations for sorted and
+random builds at several sizes:
+
+```bash
+make bench
+```
+
+When built with `IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS`, benchmark rows also
+include structural summaries such as node count, zip-list count, entry capacity,
+average fill, and minimum block count. Systems with jemalloc headers and library
+installed can also run:
+
+```bash
+make bench-jemalloc
+```
+
+The jemalloc mode adds `jemalloc,label=...` rows with allocated, active, and
+resident byte summaries.
+
 ## Reference Count Policies
 
 The default `NonAtomicRefCount` policy uses a non-atomic intrusive counter and
