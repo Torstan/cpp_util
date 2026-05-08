@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
-#include <memory>
 #include <optional>
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 #include <unordered_set>
@@ -12,15 +11,19 @@
 #include <utility>
 #include <vector>
 
+#include "immutable_container/ref_count_policy.h"
+#include "immutable_container/shared_ptr.h"
+
 namespace immutable_container {
 
-template <typename Key, typename Value, typename Comp = std::less<Key>>
+template <typename Key, typename Value, typename Comp = std::less<Key>,
+          typename RefCountPolicy = NonAtomicRefCount>
 class ImmutableTree {
  private:
   struct Node;
-  using NodePtr = std::shared_ptr<const Node>;
+  using NodePtr = SharedPtr<const Node>;
 
-  struct Node {
+  struct Node : public RefCountPolicy::Counter {
     Key key;
     Value value;
     NodePtr left;
@@ -35,7 +38,23 @@ class ImmutableTree {
           left(std::move(node_left)),
           right(std::move(node_right)),
           height(node_height),
-          size(node_size) {}
+          size(node_size) {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+      ++live_node_count_;
+#endif
+    }
+
+    ~Node() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+      --live_node_count_;
+#endif
+    }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+    static std::size_t LiveNodeCountForTest() { return live_node_count_; }
+
+    inline static std::size_t live_node_count_ = 0;
+#endif
   };
 
  public:
@@ -99,13 +118,17 @@ class ImmutableTree {
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
-  long DebugRootUseCountForTest() const { return root_.use_count(); }
+  long DebugRootUseCountForTest() const {
+    return root_ ? static_cast<long>(root_->Load()) : 0;
+  }
 
   std::size_t DebugSharedNodeCountForTest(const ImmutableTree& other) const {
     std::unordered_set<const Node*> other_nodes;
     CollectNodeAddresses(other.root_, &other_nodes);
     return CountSharedNodes(root_, other_nodes);
   }
+
+  static std::size_t DebugLiveNodeCountForTest() { return Node::LiveNodeCountForTest(); }
 #endif
 
  private:
@@ -120,7 +143,7 @@ class ImmutableTree {
   static NodePtr MakeNode(const Key& key, const Value& value, NodePtr left, NodePtr right) {
     const int height = 1 + std::max(Height(left), Height(right));
     const std::size_t size = 1 + Size(left) + Size(right);
-    return std::make_shared<Node>(key, value, std::move(left), std::move(right), height, size);
+    return NodePtr::Adopt(new Node(key, value, std::move(left), std::move(right), height, size));
   }
 
   static int BalanceFactor(const NodePtr& node) {

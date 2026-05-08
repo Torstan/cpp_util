@@ -1,3 +1,4 @@
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -5,6 +6,7 @@
 #include <vector>
 
 #include "immutable_container/immutable_tree.h"
+#include "immutable_container/ref_count_policy.h"
 
 namespace {
 
@@ -225,6 +227,34 @@ void TestSharedNodeObservation() {
           "updated version shares at least one untouched subtree node");
 }
 
+void TestIntrusiveRefCountPolicyParameterAndLiveNodes() {
+  using AtomicTree = immutable_container::ImmutableTree<
+      int, std::string, std::less<int>, immutable_container::AtomicRefCount>;
+
+  AtomicTree atomic_tree;
+  auto atomic_one = atomic_tree.Insert(1, "one");
+  Require(atomic_one.has_value(), "atomic policy tree Insert succeeds");
+  RequireEqual(*atomic_one->Find(1), std::string("one"), "atomic policy tree Find works");
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using Tree = immutable_container::ImmutableTree<int, std::string>;
+  const std::size_t before = Tree::DebugLiveNodeCountForTest();
+  {
+    Tree tree;
+    auto one = tree.Insert(1, "one");
+    Require(one.has_value(), "live node test first insert succeeds");
+    auto two = one->Insert(2, "two");
+    Require(two.has_value(), "live node test second insert succeeds");
+    auto three = two->Set(3, "three");
+    Require(three.Contains(3), "live node test Set succeeds");
+    Require(Tree::DebugLiveNodeCountForTest() > before,
+            "live node count increases while versions are alive");
+  }
+  RequireEqual(Tree::DebugLiveNodeCountForTest(), before,
+               "all intrusive tree nodes are released after scope");
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -236,6 +266,7 @@ int main() {
     TestEraseCreatesNewVersions();
     TestAvlBalancingForSortedInput();
     TestSharedNodeObservation();
+    TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     std::cout << "immutable_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
