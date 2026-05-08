@@ -68,13 +68,19 @@ class ImmutableTree {
     return ImmutableTree(*new_root, comp_);
   }
 
-  std::optional<ImmutableTree> Update(const Key& /*key*/, const Value& /*value*/) const {
-    return std::nullopt;
+  std::optional<ImmutableTree> Update(const Key& key, const Value& value) const {
+    auto new_root = UpdateNode(root_, key, value);
+    if (!new_root.has_value()) {
+      return std::nullopt;
+    }
+    return ImmutableTree(*new_root, comp_);
   }
 
   std::optional<ImmutableTree> Erase(const Key& /*key*/) const { return std::nullopt; }
 
-  ImmutableTree Set(const Key& /*key*/, const Value& /*value*/) const { return *this; }
+  ImmutableTree Set(const Key& key, const Value& value) const {
+    return ImmutableTree(SetNode(root_, key, value), comp_);
+  }
 
   std::vector<std::pair<Key, Value>> ToVector() const {
     std::vector<std::pair<Key, Value>> result;
@@ -123,6 +129,49 @@ class ImmutableTree {
     }
 
     return std::nullopt;
+  }
+
+  std::optional<NodePtr> UpdateNode(const NodePtr& node, const Key& key,
+                                    const Value& value) const {
+    if (!node) {
+      return std::nullopt;
+    }
+
+    if (Less(key, node->key)) {
+      auto new_left = UpdateNode(node->left, key, value);
+      if (!new_left.has_value()) {
+        return std::nullopt;
+      }
+      return Balance(MakeNode(node->key, node->value, *new_left, node->right));
+    }
+
+    if (Less(node->key, key)) {
+      auto new_right = UpdateNode(node->right, key, value);
+      if (!new_right.has_value()) {
+        return std::nullopt;
+      }
+      return Balance(MakeNode(node->key, node->value, node->left, *new_right));
+    }
+
+    return Balance(MakeNode(node->key, value, node->left, node->right));
+  }
+
+  NodePtr SetNode(const NodePtr& node, const Key& key, const Value& value) const {
+    if (!node) {
+      return MakeNode(key, value, nullptr, nullptr);
+    }
+
+    if (Less(key, node->key)) {
+      return Balance(MakeNode(node->key, node->value, SetNode(node->left, key, value),
+                              node->right));
+    }
+
+    if (Less(node->key, key)) {
+      return Balance(MakeNode(node->key, node->value, node->left,
+                              SetNode(node->right, key, value)));
+    }
+
+    return Balance(MakeNode(node->key, value, node->left, node->right));
   }
 
   static void AppendInOrder(const NodePtr& node, std::vector<std::pair<Key, Value>>* result) {

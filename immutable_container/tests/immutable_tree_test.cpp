@@ -23,6 +23,17 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+immutable_container::ImmutableTree<int, std::string> BuildTree(
+    const std::vector<std::pair<int, std::string>>& values) {
+  immutable_container::ImmutableTree<int, std::string> tree;
+  for (const auto& item : values) {
+    auto next = tree.Insert(item.first, item.second);
+    Require(next.has_value(), "BuildTree insert succeeds");
+    tree = *next;
+  }
+  return tree;
+}
+
 void TestEmptyTree() {
   immutable_container::ImmutableTree<int, std::string> tree;
 
@@ -91,12 +102,38 @@ void TestComparatorDoesNotRequireKeyEquality() {
   Require(!duplicate.has_value(), "custom comparator detects duplicate without operator==");
 }
 
+void TestUpdateAndSetCreateNewVersions() {
+  const auto tree = BuildTree({{2, "two"}, {1, "one"}, {3, "three"}});
+
+  auto missing_update = tree.Update(9, "nine");
+  Require(!missing_update.has_value(), "Update of missing key returns nullopt");
+
+  auto maybe_updated = tree.Update(2, "TWO");
+  Require(maybe_updated.has_value(), "Update of existing key succeeds");
+  const auto updated = *maybe_updated;
+
+  RequireEqual(*tree.Find(2), std::string("two"), "Update leaves old version unchanged");
+  RequireEqual(*updated.Find(2), std::string("TWO"), "Update changes value in new version");
+  RequireEqual(updated.Size(), tree.Size(), "Update keeps size unchanged");
+
+  const auto set_existing = tree.Set(3, "THREE");
+  RequireEqual(*tree.Find(3), std::string("three"), "Set existing leaves old version unchanged");
+  RequireEqual(*set_existing.Find(3), std::string("THREE"), "Set existing changes new version");
+  RequireEqual(set_existing.Size(), tree.Size(), "Set existing keeps size unchanged");
+
+  const auto set_missing = tree.Set(4, "four");
+  Require(!tree.Contains(4), "Set missing leaves old version without key");
+  RequireEqual(*set_missing.Find(4), std::string("four"), "Set missing inserts in new version");
+  RequireEqual(set_missing.Size(), tree.Size() + 1, "Set missing increases new version size");
+}
+
 }  // namespace
 
 int main() {
   TestEmptyTree();
   TestInsertPersistenceAndDuplicateFailure();
   TestComparatorDoesNotRequireKeyEquality();
+  TestUpdateAndSetCreateNewVersions();
   std::cout << "immutable_tree_test passed\n";
   return 0;
 }
