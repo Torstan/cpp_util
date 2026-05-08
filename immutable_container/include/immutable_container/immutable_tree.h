@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 #include <unordered_set>
+#endif
 #include <utility>
 #include <vector>
 
@@ -96,6 +98,7 @@ class ImmutableTree {
     return result;
   }
 
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   long DebugRootUseCountForTest() const { return root_.use_count(); }
 
   std::size_t DebugSharedNodeCountForTest(const ImmutableTree& other) const {
@@ -103,6 +106,7 @@ class ImmutableTree {
     CollectNodeAddresses(other.root_, &other_nodes);
     return CountSharedNodes(root_, other_nodes);
   }
+#endif
 
  private:
   ImmutableTree(NodePtr root, Comp comp) : root_(std::move(root)), comp_(std::move(comp)) {}
@@ -287,6 +291,7 @@ class ImmutableTree {
     AppendInOrder(node->right, result);
   }
 
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   static void CollectNodeAddresses(const NodePtr& node,
                                    std::unordered_set<const Node*>* addresses) {
     if (!node) {
@@ -306,6 +311,7 @@ class ImmutableTree {
     return current + CountSharedNodes(node->left, other_nodes) +
            CountSharedNodes(node->right, other_nodes);
   }
+#endif
 
   NodePtr root_;
   Comp comp_{};

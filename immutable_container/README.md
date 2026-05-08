@@ -14,7 +14,9 @@ nodes.
 ## Operations
 
 - `Empty()`, `Size()`, and `Height()` inspect the current version.
-- `Find(key)` returns a `const Value*`, or `nullptr` when the key is absent.
+- `Find(key)` returns a `const Value*`, or `nullptr` when the key is absent. The
+  pointer refers to immutable node storage and is valid while a tree version
+  sharing that node remains alive.
 - `Contains(key)` checks whether a key exists.
 - `Insert(key, value)` returns `std::optional<ImmutableTree>` with a new version,
   or `std::nullopt` if the key already exists.
@@ -24,6 +26,9 @@ nodes.
   `std::nullopt` if the key is absent.
 - `Set(key, value)` inserts or replaces and always returns a new version.
 - `ToVector()` returns sorted key-value pairs.
+
+`Comp` must be default-constructible. `Key` and `Value` must be copy-constructible
+for node creation and `ToVector()`.
 
 ## Example
 
