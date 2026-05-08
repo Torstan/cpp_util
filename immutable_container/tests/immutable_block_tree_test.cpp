@@ -134,38 +134,70 @@ void TestUpdateAndSetCreateNewVersions() {
   RequireEqual(set_missing.Size(), tree.Size() + 1, "Set missing increases new version size");
 }
 
-void TestBlocksFillAndSplit() {
-  using Tree = immutable_container::ImmutableBlockTree<int, int, std::less<int>,
+void TestSplitCreatesMultipleBlocksAndStats() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
                                                        immutable_container::NonAtomicRefCount, 64>;
   Tree tree;
   std::vector<int> keys;
 
-  for (int key = 0; key <= 16; key += 2) {
-    auto next = tree.Insert(key, key * 10);
+  for (int key = 0; key < 20; ++key) {
+    auto next = tree.Insert(key, std::to_string(key));
     Require(next.has_value(), "ordered structural insert succeeds");
-    tree = *next;
-    keys.push_back(key);
-  }
-
-  for (int key = 1; key <= 17; key += 2) {
-    auto next = tree.Insert(key, key * 10);
-    Require(next.has_value(), "interior structural insert succeeds");
     tree = *next;
     keys.push_back(key);
   }
 
   RequireEqual(tree.Size(), keys.size(), "structural tree size");
   for (int key : keys) {
-    const int* found = tree.Find(key);
+    const std::string* found = tree.Find(key);
     Require(found != nullptr, "structural tree finds inserted key after split");
-    RequireEqual(*found, key * 10, "structural tree keeps inserted value after split");
+    RequireEqual(*found, std::to_string(key),
+                 "structural tree keeps inserted value after split");
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   const auto stats = tree.DebugStatsForTest();
-  Require(stats.entry_capacity > 1, "structural test uses blocks with spare capacity");
-  Require(stats.node_count < tree.Size(), "block tree stores multiple entries per node");
-  Require(stats.AverageFillRate() > 0.25, "block tree keeps a reasonable average fill rate");
+  RequireEqual(stats.entry_count, std::size_t{20}, "split stats count all entries");
+  Require(stats.node_count > 1, "split creates multiple block nodes");
+  RequireEqual(stats.node_count, stats.zip_list_count, "each node owns one zip list");
+  Require(stats.entry_capacity >= stats.entry_count,
+          "split stats capacity covers stored entries");
+  Require(stats.AverageFillRate() > 0.4, "split keeps a reasonable average fill rate");
+#endif
+}
+
+void TestSharedNodeObservation() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
+                                                       immutable_container::NonAtomicRefCount, 64>;
+  Tree tree;
+  for (int key = 0; key < 20; ++key) {
+    auto next = tree.Insert(key, std::to_string(key));
+    Require(next.has_value(), "sharing setup insert succeeds");
+    tree = *next;
+  }
+
+  const auto copied = tree;
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(tree.DebugRootUseCountForTest() >= 2, "copying a block tree shares root pointer");
+#endif
+
+  auto maybe_inserted = tree.Insert(20, "20");
+  Require(maybe_inserted.has_value(), "insert for block sharing test succeeds");
+  const auto inserted = *maybe_inserted;
+
+  Require(!tree.Contains(20), "insert leaves old block tree without new key");
+  RequireEqual(*inserted.Find(20), std::string("20"),
+               "inserted block tree contains new key");
+  for (int key = 0; key < 20; ++key) {
+    RequireEqual(*tree.Find(key), std::to_string(key),
+                 "old block tree keeps existing value after sharing insert");
+    RequireEqual(*inserted.Find(key), std::to_string(key),
+                 "new block tree keeps existing value after sharing insert");
+  }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(inserted.DebugSharedNodeCountForTest(tree) > 0,
+          "new block tree shares at least one untouched node");
 #endif
 }
 
@@ -177,8 +209,9 @@ int main() {
     TestInsertPersistenceFindDuplicateAndSortedVector();
     TestComparatorDoesNotRequireKeyEquality();
     TestUpdateAndSetCreateNewVersions();
-    TestBlocksFillAndSplit();
-    std::cout << "immutable_block_tree_test basic passed\n";
+    TestSplitCreatesMultipleBlocksAndStats();
+    TestSharedNodeObservation();
+    std::cout << "immutable_block_tree_test split passed\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "FAIL: " << e.what() << "\n";
