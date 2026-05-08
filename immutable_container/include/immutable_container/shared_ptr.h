@@ -78,6 +78,16 @@ class SharedPtr {
   const T* ptr_ = nullptr;
 };
 
+template <typename T>
+bool operator==(std::nullptr_t, const SharedPtr<T>& ptr) {
+  return ptr == nullptr;
+}
+
+template <typename T>
+bool operator!=(std::nullptr_t, const SharedPtr<T>& ptr) {
+  return ptr != nullptr;
+}
+
 }  // namespace immutable_container
 
 #endif  // IMMUTABLE_CONTAINER_SHARED_PTR_H_
