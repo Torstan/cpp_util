@@ -31,6 +31,8 @@ class CountingObject : public CounterPolicy::Counter {
 
   int Value() const { return value_; }
 
+  void SetValue(int value) { value_ = value; }
+
  private:
   int value_;
   LifecycleCounts* counts_;
@@ -111,6 +113,17 @@ void TestNullPointerSupport() {
   Require(counts.destroyed == 1, "nullptr assignment releases owned target");
 }
 
+template <typename CounterPolicy>
+void TestNonConstPointeeStaysMutable() {
+  using Object = CountingObject<CounterPolicy>;
+  using Ptr = immutable_container::SharedPtr<Object>;
+
+  LifecycleCounts counts;
+  Ptr ptr = Ptr::Adopt(new Object(5, &counts));
+  ptr->SetValue(6);
+  Require(ptr->Value() == 6, "SharedPtr<T> exposes mutable T when T is non-const");
+}
+
 }  // namespace
 
 int main() {
@@ -121,6 +134,8 @@ int main() {
     TestAssignmentReleasesOldTarget<immutable_container::AtomicRefCount>();
     TestNullPointerSupport<immutable_container::NonAtomicRefCount>();
     TestNullPointerSupport<immutable_container::AtomicRefCount>();
+    TestNonConstPointeeStaysMutable<immutable_container::NonAtomicRefCount>();
+    TestNonConstPointeeStaysMutable<immutable_container::AtomicRefCount>();
     std::cout << "shared_ptr_test passed\n";
     return 0;
   } catch (const std::exception& e) {
