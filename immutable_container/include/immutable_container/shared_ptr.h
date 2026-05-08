@@ -49,11 +49,11 @@ class SharedPtr {
     return *this;
   }
 
-  const T* get() const { return ptr_; }
+  T* get() const { return ptr_; }
 
-  const T& operator*() const { return *ptr_; }
+  T& operator*() const { return *ptr_; }
 
-  const T* operator->() const { return ptr_; }
+  T* operator->() const { return ptr_; }
 
   bool operator==(std::nullptr_t) const { return ptr_ == nullptr; }
 
@@ -62,7 +62,7 @@ class SharedPtr {
   explicit operator bool() const { return ptr_ != nullptr; }
 
  private:
-  static void Retain(const T* ptr) {
+  static void Retain(T* ptr) {
     if (ptr) {
       ptr->Retain();
     }
@@ -75,7 +75,7 @@ class SharedPtr {
     ptr_ = nullptr;
   }
 
-  const T* ptr_ = nullptr;
+  T* ptr_ = nullptr;
 };
 
 template <typename T>

@@ -487,6 +487,8 @@ class CountingObject : public CounterPolicy::Counter {
 
   int Value() const { return value_; }
 
+  void SetValue(int value) { value_ = value; }
+
  private:
   int value_;
   LifecycleCounts* counts_;
@@ -567,6 +569,17 @@ void TestNullPointerSupport() {
   Require(counts.destroyed == 1, "nullptr assignment releases owned target");
 }
 
+template <typename CounterPolicy>
+void TestNonConstPointeeStaysMutable() {
+  using Object = CountingObject<CounterPolicy>;
+  using Ptr = immutable_container::SharedPtr<Object>;
+
+  LifecycleCounts counts;
+  Ptr ptr = Ptr::Adopt(new Object(5, &counts));
+  ptr->SetValue(6);
+  Require(ptr->Value() == 6, "SharedPtr<T> exposes mutable T when T is non-const");
+}
+
 }  // namespace
 
 int main() {
@@ -577,6 +590,8 @@ int main() {
     TestAssignmentReleasesOldTarget<immutable_container::AtomicRefCount>();
     TestNullPointerSupport<immutable_container::NonAtomicRefCount>();
     TestNullPointerSupport<immutable_container::AtomicRefCount>();
+    TestNonConstPointeeStaysMutable<immutable_container::NonAtomicRefCount>();
+    TestNonConstPointeeStaysMutable<immutable_container::AtomicRefCount>();
     std::cout << "shared_ptr_test passed\n";
     return 0;
   } catch (const std::exception& e) {
@@ -728,11 +743,11 @@ class SharedPtr {
     return *this;
   }
 
-  const T* get() const { return ptr_; }
+  T* get() const { return ptr_; }
 
-  const T& operator*() const { return *ptr_; }
+  T& operator*() const { return *ptr_; }
 
-  const T* operator->() const { return ptr_; }
+  T* operator->() const { return ptr_; }
 
   bool operator==(std::nullptr_t) const { return ptr_ == nullptr; }
 
@@ -741,7 +756,7 @@ class SharedPtr {
   explicit operator bool() const { return ptr_ != nullptr; }
 
  private:
-  static void Retain(const T* ptr) {
+  static void Retain(T* ptr) {
     if (ptr) {
       ptr->Retain();
     }
@@ -754,7 +769,7 @@ class SharedPtr {
     ptr_ = nullptr;
   }
 
-  const T* ptr_ = nullptr;
+  T* ptr_ = nullptr;
 };
 
 template <typename T>
