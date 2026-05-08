@@ -14,7 +14,8 @@ namespace immutable_container {
 struct NonAtomicRefCount;
 
 template <typename Key, typename Value, typename Comp = std::less<Key>,
-          typename RefCountPolicy = NonAtomicRefCount>
+          typename RefCountPolicy = NonAtomicRefCount,
+          typename Tree = ImmutableTree<Key, Value, Comp, RefCountPolicy>>
 class ImtMap {
  public:
   ImtMap() = default;
@@ -60,8 +61,6 @@ class ImtMap {
   std::vector<std::pair<Key, Value>> ToVector() const { return tree_.ToVector(); }
 
  private:
-  using Tree = ImmutableTree<Key, Value, Comp, RefCountPolicy>;
-
   explicit ImtMap(Tree tree) : tree_(std::move(tree)) {}
 
   Tree tree_;

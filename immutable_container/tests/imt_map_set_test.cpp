@@ -1,10 +1,13 @@
 #include <iostream>
+#include <map>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "immutable_container/immutable_block_tree.h"
 #include "immutable_container/imt_map.h"
 #include "immutable_container/imt_set.h"
 
@@ -77,6 +80,43 @@ void TestImtMapSetAndOrdering() {
   Require(changed.ToVector() == expected, "ImtMap ToVector returns sorted pairs");
 }
 
+void TestImtMapRandomWritesMatchStdMapAcrossTreeBackends() {
+  using TreeMap = immutable_container::ImtMap<int, int>;
+  using BlockTree = immutable_container::ImmutableBlockTree<
+      int, int, std::less<int>, immutable_container::NonAtomicRefCount, 1024>;
+  using BlockTreeMap = immutable_container::ImtMap<
+      int, int, std::less<int>, immutable_container::NonAtomicRefCount, BlockTree>;
+
+  std::map<int, int> expected;
+  TreeMap tree_map;
+  BlockTreeMap block_tree_map;
+  std::mt19937 rng(1);
+  std::uniform_int_distribution<int> key_dist(0, 3000);
+  std::uniform_int_distribution<int> value_dist(-1000000, 1000000);
+
+  for (int i = 0; i < 10000; ++i) {
+    const int key = key_dist(rng);
+    const int value = value_dist(rng);
+    expected[key] = value;
+    tree_map = tree_map.Set(key, value);
+    block_tree_map = block_tree_map.Set(key, value);
+  }
+
+  RequireEqual(tree_map.Size(), expected.size(), "tree-backed ImtMap size matches std::map");
+  RequireEqual(block_tree_map.Size(), expected.size(),
+               "block-tree-backed ImtMap size matches std::map");
+
+  for (const auto& item : expected) {
+    const int* tree_value = tree_map.Find(item.first);
+    const int* block_tree_value = block_tree_map.Find(item.first);
+    Require(tree_value != nullptr, "tree-backed ImtMap contains std::map key");
+    Require(block_tree_value != nullptr, "block-tree-backed ImtMap contains std::map key");
+    RequireEqual(*tree_value, item.second, "tree-backed ImtMap value matches std::map");
+    RequireEqual(*block_tree_value, item.second,
+                 "block-tree-backed ImtMap value matches std::map");
+  }
+}
+
 void TestImtSetBehavior() {
   immutable_container::ImtSet<int> set;
 
@@ -114,6 +154,7 @@ int main() {
   try {
     TestImtMapEmptyAndStrictUpdates();
     TestImtMapSetAndOrdering();
+    TestImtMapRandomWritesMatchStdMapAcrossTreeBackends();
     TestImtSetBehavior();
     std::cout << "imt_map_set_test passed\n";
     return 0;
