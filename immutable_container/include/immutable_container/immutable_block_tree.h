@@ -66,15 +66,14 @@ class ImmutableBlockTree {
     std::size_t node_count = 0;
     std::size_t zip_list_count = 0;
     std::size_t entry_count = 0;
-    std::size_t entry_capacity = Block::DefaultCapacity();
+    std::size_t entry_capacity = 0;
     std::size_t min_block_count = 0;
 
     double AverageFillRate() const {
-      if (zip_list_count == 0 || entry_capacity == 0) {
+      if (entry_capacity == 0) {
         return 0.0;
       }
-      return static_cast<double>(entry_count) /
-             static_cast<double>(zip_list_count * entry_capacity);
+      return static_cast<double>(entry_count) / static_cast<double>(entry_capacity);
     }
   };
 #endif
@@ -131,14 +130,24 @@ class ImmutableBlockTree {
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  long DebugRootUseCountForTest() const {
+    return root_ ? static_cast<long>(root_->Load()) : 0;
+  }
+
+  std::size_t DebugSharedNodeCountForTest(const ImmutableBlockTree& other) const {
+    std::unordered_set<const Node*> other_nodes;
+    CollectNodeAddresses(other.root_, &other_nodes);
+    return CountSharedNodes(root_, other_nodes);
+  }
+
   static std::size_t DebugLiveNodeCountForTest() { return Node::LiveNodeCountForTest(); }
 
   DebugStats DebugStatsForTest() const {
     DebugStats stats;
     CollectStats(root_, &stats);
-    if (stats.entry_capacity > 0) {
+    if (Block::DefaultCapacity() > 0) {
       stats.min_block_count =
-          (stats.entry_count + stats.entry_capacity - 1) / stats.entry_capacity;
+          (stats.entry_count + Block::DefaultCapacity() - 1) / Block::DefaultCapacity();
     }
     return stats;
   }
@@ -338,8 +347,29 @@ class ImmutableBlockTree {
     ++stats->node_count;
     ++stats->zip_list_count;
     stats->entry_count += node->block.Count();
+    stats->entry_capacity += node->block.Capacity();
     CollectStats(node->left, stats);
     CollectStats(node->right, stats);
+  }
+
+  static void CollectNodeAddresses(const NodePtr& node,
+                                   std::unordered_set<const Node*>* addresses) {
+    if (!node) {
+      return;
+    }
+    addresses->insert(node.get());
+    CollectNodeAddresses(node->left, addresses);
+    CollectNodeAddresses(node->right, addresses);
+  }
+
+  static std::size_t CountSharedNodes(
+      const NodePtr& node, const std::unordered_set<const Node*>& other_nodes) {
+    if (!node) {
+      return 0;
+    }
+    const std::size_t current = other_nodes.count(node.get());
+    return current + CountSharedNodes(node->left, other_nodes) +
+           CountSharedNodes(node->right, other_nodes);
   }
 #endif
 
