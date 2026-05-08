@@ -18,7 +18,7 @@ template <typename Key, typename Comp = std::less<Key>,
 class ImtSet {
  private:
   struct UnitValue {};
-  using Tree = ImmutableTree<Key, UnitValue, Comp>;
+  using Tree = ImmutableTree<Key, UnitValue, Comp, RefCountPolicy>;
 
  public:
   ImtSet() = default;

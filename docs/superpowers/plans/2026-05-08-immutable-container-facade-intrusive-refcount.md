@@ -796,10 +796,16 @@ Expected: commit succeeds.
 - [ ] **Step 1: Add policy and live-node tests before the tree supports them**
 
 In `immutable_container/tests/immutable_tree_test.cpp`, add this include with the
-other includes:
+standard library includes:
 
 ```cpp
 #include <functional>
+```
+
+Add this include with the project includes:
+
+```cpp
+#include "immutable_container/ref_count_policy.h"
 ```
 
 Add this test after `TestSharedNodeObservation()`:

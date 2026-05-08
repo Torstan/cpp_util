@@ -60,7 +60,7 @@ class ImtMap {
   std::vector<std::pair<Key, Value>> ToVector() const { return tree_.ToVector(); }
 
  private:
-  using Tree = ImmutableTree<Key, Value, Comp>;
+  using Tree = ImmutableTree<Key, Value, Comp, RefCountPolicy>;
 
   explicit ImtMap(Tree tree) : tree_(std::move(tree)) {}
 
