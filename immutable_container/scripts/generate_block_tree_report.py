@@ -41,6 +41,18 @@ INT_FIELDS = {
     "resident_delta",
 }
 
+OPTIONAL_INT_FIELDS = {
+    "nodes",
+    "zip_lists",
+    "entries",
+    "entry_capacity",
+    "min_block_count",
+}
+
+OPTIONAL_FLOAT_FIELDS = {
+    "avg_fill",
+}
+
 IMPLEMENTATION_ORDER = {
     "immutable_tree": 0,
     "block_tree_2048": 1,
@@ -92,6 +104,20 @@ def _coerce_case(row, source):
             coerced[field] = int(coerced[field], 10)
         except ValueError as exc:
             raise ReportError(f"{source}: field {field} must be an integer") from exc
+    for field in OPTIONAL_INT_FIELDS:
+        if field not in coerced or coerced[field] == "":
+            continue
+        try:
+            coerced[field] = int(coerced[field], 10)
+        except ValueError as exc:
+            raise ReportError(f"{source}: field {field} must be an integer") from exc
+    for field in OPTIONAL_FLOAT_FIELDS:
+        if field not in coerced or coerced[field] == "":
+            continue
+        try:
+            coerced[field] = float(coerced[field])
+        except ValueError as exc:
+            raise ReportError(f"{source}: field {field} must be a float") from exc
     return coerced
 
 
@@ -273,6 +299,20 @@ def _n(value):
     return Numeric(value)
 
 
+def _optional_int(row, field):
+    value = row.get(field)
+    if value == "" or value is None:
+        return "n/a"
+    return _n(fmt_int(value))
+
+
+def _optional_float(row, field):
+    value = row.get(field)
+    if value == "" or value is None:
+        return "n/a"
+    return _n(fmt_float(value))
+
+
 def performance_rows(cases):
     rows = []
     for row in sorted(cases, key=sort_key):
@@ -320,6 +360,12 @@ def structure_rows(cases):
                 _n(fmt_int(row["size"])),
                 row["pattern"],
                 _n(fmt_int(row["height"])),
+                _optional_int(row, "nodes"),
+                _optional_int(row, "zip_lists"),
+                _optional_int(row, "entries"),
+                _optional_int(row, "entry_capacity"),
+                _optional_float(row, "avg_fill"),
+                _optional_int(row, "min_block_count"),
             ]
         )
     return rows
@@ -351,18 +397,31 @@ def _metadata_html(items):
     return "<table class=\"metadata\"><tbody>\n" + "\n".join(rows) + "\n</tbody></table>"
 
 
+def _comparison_phrase(label, comparison):
+    if comparison == "same":
+        return f"{label} same as immutable_tree"
+    if comparison == "n/a":
+        return f"{label} n/a vs immutable_tree"
+    return f"{label} {comparison} than immutable_tree"
+
+
 def _observations_html(observations):
     if not observations:
         return "<p>No complete immutable_tree/block_tree comparison groups were found.</p>"
     items = []
     for obs in observations:
+        comparisons = [
+            _comparison_phrase("build", obs["build"]),
+            _comparison_phrase("hit", obs["hit"]),
+            _comparison_phrase("miss", obs["miss"]),
+            _comparison_phrase("to_vector", obs["vector"]),
+            _comparison_phrase("resident", obs["resident"]),
+        ]
         items.append(
             "<li>"
             + _html_escape(
                 f"{obs['pattern']} keys={obs['key_bytes']} values={obs['value_bytes']} "
-                f"size={obs['size']}: {obs['name']} build {obs['build']}, "
-                f"hit {obs['hit']}, miss {obs['miss']}, to_vector {obs['vector']}, "
-                f"resident {obs['resident']} than immutable_tree."
+                f"size={obs['size']}: {obs['name']} {', '.join(comparisons)}."
             )
             + "</li>"
         )
@@ -446,7 +505,7 @@ li {{ margin: 6px 0; }}
 
 <h2>Block Structure</h2>
 <div class="panel">
-{_table(["Implementation", "Key bytes", "Value bytes", "Size", "Pattern", "Height"], structure_rows(cases))}
+{_table(["Implementation", "Key bytes", "Value bytes", "Size", "Pattern", "Height", "Nodes", "Zip lists", "Entries", "Entry capacity", "Average fill", "Minimum block count"], structure_rows(cases))}
 </div>
 </main>
 </body>
@@ -489,17 +548,35 @@ def self_test():
             "case,name=immutable_tree,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            "case,name=block_tree_2048,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+            "height=5,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
+            "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384,"
+            "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
+            "min_block_count=1\n",
         ],
         "<self-test>",
     )
     assert env["allocator"] == "jemalloc"
     assert cases[0]["key_bytes"] == 32
     assert cases[0]["value_bytes"] == 64
+    assert cases[1]["nodes"] == 7
+    assert cases[1]["avg_fill"] == 0.8333
     assert fmt_int(1234567) == "1,234,567"
     assert fmt_us(1234) == "1.23 ms"
     assert fmt_bytes(2048) == "2.00 KiB"
     assert fmt_bytes_per_entry(4096, 32) == "128.00 B/entry"
     assert fmt_float(1.23456) == "1.23"
+    args = argparse.Namespace(
+        bench_command="bench",
+        jemalloc_path="jemalloc",
+    )
+    html_text = render_html(env, cases, args, "<self-test>")
+    assert "Zip lists" in html_text
+    assert "Entry capacity" in html_text
+    assert "Average fill" in html_text
+    assert "Minimum block count" in html_text
+    assert "same as immutable_tree" in html_text
+    assert "same than immutable_tree" not in html_text
 
 
 def parse_args(argv):
@@ -537,7 +614,14 @@ def main(argv=None):
             input_label = f"command: {args.bench_command}"
         write_report(args.output, render_html(env, cases, args, input_label))
         print(f"wrote {args.output}")
-    except (OSError, subprocess.CalledProcessError, ReportError) as exc:
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        if stderr:
+            print(f"error: {exc}\n{stderr}", file=sys.stderr)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, ReportError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
