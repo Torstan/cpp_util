@@ -186,6 +186,16 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   });
   RefreshJemallocEpoch();
   const JemallocStats after_build_stats = ReadJemallocStats();
+  if (size != 0) {
+    std::optional<Tree> duplicate =
+        tree.Insert(MakeStringKey(0, key_bytes), MakeStringValue(0, value_bytes));
+    if (duplicate.has_value()) {
+      std::cerr << "duplicate string insert accepted for name=" << name
+                << ",pattern=" << pattern << ",size=" << size
+                << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes << "\n";
+      std::exit(2);
+    }
+  }
 
   const std::size_t repetitions = ReadRepetitions(size);
   const long long hit_contains_us = TimeMicros([&] {
