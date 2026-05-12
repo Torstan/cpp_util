@@ -5,9 +5,19 @@ CPPFLAGS ?= -Iinclude -DIMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 BUILD_DIR := build
 TEST_DIR := tests
 BENCH_DIR := benchmarks
+REPORT_DIR := reports
+STRING_REPORT_BENCH_SRC := $(BENCH_DIR)/block_tree_string_report_bench.cpp
+STRING_REPORT_BENCH_BIN := $(BUILD_DIR)/bench_block_tree_string_report_jemalloc
+STRING_REPORT_RAW := $(BUILD_DIR)/immutable_tree_vs_block_tree_string.csv
+STRING_REPORT_HTML := $(REPORT_DIR)/immutable_tree_vs_block_tree.html
+JEMALLOC_DIR ?= ../thirdparty/jemalloc
+JEMALLOC_OBJ_DIR ?= $(JEMALLOC_DIR)/obj
+JEMALLOC_INCLUDE := $(JEMALLOC_OBJ_DIR)/include
+JEMALLOC_STATIC_LIB := $(JEMALLOC_OBJ_DIR)/lib/libjemalloc.a
+JEMALLOC_LOCAL_LIBS ?= -Wl,--whole-archive $(JEMALLOC_STATIC_LIB) -Wl,--no-whole-archive -pthread -ldl -lm
 TEST_SRCS := $(wildcard $(TEST_DIR)/*_test.cpp)
 TEST_BINS := $(patsubst $(TEST_DIR)/%.cpp,$(BUILD_DIR)/%,$(TEST_SRCS))
-BENCH_SRCS := $(wildcard $(BENCH_DIR)/*.cpp)
+BENCH_SRCS := $(filter-out $(STRING_REPORT_BENCH_SRC),$(wildcard $(BENCH_DIR)/*.cpp))
 BENCH_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%,$(BENCH_SRCS))
 JEMALLOC_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%_jemalloc,$(BENCH_SRCS))
 JEMALLOC_LIBS ?= -ljemalloc
@@ -19,12 +29,15 @@ CLANG_TIDY_FLAGS ?= --warnings-as-errors=clang-analyzer-core.StackAddressEscape
 CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
 CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem
 
-.PHONY: all test bench bench-jemalloc clean lint
+.PHONY: all test bench bench-jemalloc string-report clean lint
 
 all: $(TEST_BINS)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
+
+$(REPORT_DIR):
+	mkdir -p $(REPORT_DIR)
 
 $(BUILD_DIR)/%: $(TEST_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
@@ -34,6 +47,27 @@ $(BUILD_DIR)/bench_%: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 
 $(BUILD_DIR)/bench_%_jemalloc: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LIBS)
+
+$(JEMALLOC_STATIC_LIB):
+	@if [ ! -x "$(JEMALLOC_DIR)/autogen.sh" ]; then \
+		echo "missing $(JEMALLOC_DIR)/autogen.sh"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(JEMALLOC_DIR)/Makefile" ] && [ ! -f "$(JEMALLOC_DIR)/config.status" ]; then \
+		cd "$(JEMALLOC_DIR)" && ./autogen.sh; \
+	fi
+	$(MAKE) -C $(JEMALLOC_DIR)
+
+$(STRING_REPORT_BENCH_BIN): $(STRING_REPORT_BENCH_SRC) $(HEADERS) Makefile $(JEMALLOC_STATIC_LIB) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) -I$(JEMALLOC_INCLUDE) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LOCAL_LIBS)
+
+$(STRING_REPORT_RAW): $(STRING_REPORT_BENCH_BIN)
+	./$(STRING_REPORT_BENCH_BIN) > $(STRING_REPORT_RAW)
+
+$(STRING_REPORT_HTML): $(STRING_REPORT_RAW) scripts/generate_block_tree_report.py Makefile | $(REPORT_DIR)
+	python3 scripts/generate_block_tree_report.py --input $(STRING_REPORT_RAW) --output $(STRING_REPORT_HTML) --bench-command ./$(STRING_REPORT_BENCH_BIN) --jemalloc-path $(JEMALLOC_DIR)
+
+string-report: $(STRING_REPORT_HTML)
 
 test: all
 	@for test_bin in $(TEST_BINS); do \
