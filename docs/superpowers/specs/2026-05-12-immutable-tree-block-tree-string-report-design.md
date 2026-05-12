@@ -7,7 +7,8 @@ string-value workloads, then generate a self-contained HTML report with
 performance and memory data.
 
 The measured element counts are `1`, `10`, `100`, `1000`, `10000`, and
-`100000`. Both key and value types are `std::string`.
+`100000`. Both key and value types are `std::string`. Key byte lengths are
+`32` and `64`; value byte lengths are `64`, `128`, `256`, and `1024`.
 
 ## Scope
 
@@ -26,7 +27,7 @@ The existing container APIs and correctness tests are not changed.
 ## Benchmark Cases
 
 Each case is identified by tree implementation, input pattern, and element
-count.
+count, key byte length, and value byte length.
 
 Implementations:
 
@@ -38,6 +39,11 @@ Input patterns:
 
 - `sorted`: keys are inserted in ascending order.
 - `random`: the same key set is shuffled with a fixed seed.
+
+String lengths:
+
+- Key bytes: `32`, `64`.
+- Value bytes: `64`, `128`, `256`, `1024`.
 
 Measured operations:
 
@@ -51,10 +57,12 @@ allocator snapshot reflects retained container storage.
 
 ## String Data
 
-Keys and values are deterministic strings derived from the numeric index:
+Keys and values are deterministic ASCII strings derived from the numeric index:
 
-- Keys are zero-padded strings, so lexical order matches numeric order.
-- Values include a stable prefix and the same index.
+- Keys are exactly the requested byte length and use a zero-padded numeric
+  suffix, so lexical order matches numeric order.
+- Values are exactly the requested byte length and include a stable prefix,
+  zero-padded index, and deterministic payload padding.
 
 This keeps sorted and random workloads comparable and avoids accidental key
 collisions.
@@ -114,7 +122,8 @@ The HTML report contains:
 
 - Report title and generation timestamp.
 - Environment details: compiler, optimization flags, jemalloc path, and command.
-- Test matrix: implementations, input patterns, element counts, and operations.
+- Test matrix: implementations, input patterns, element counts, string lengths,
+  and operations.
 - Performance tables for build, hit contains, miss contains, and traversal.
 - Memory tables using jemalloc deltas and bytes per entry.
 - Block-tree structural tables for fill-rate and node/block behavior.
