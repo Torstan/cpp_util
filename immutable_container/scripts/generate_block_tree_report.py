@@ -536,6 +536,7 @@ def main(argv=None):
             env, cases = _run_benchmark(args.bench_command)
             input_label = f"command: {args.bench_command}"
         write_report(args.output, render_html(env, cases, args, input_label))
+        print(f"wrote {args.output}")
     except (OSError, subprocess.CalledProcessError, ReportError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
