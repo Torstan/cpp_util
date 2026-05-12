@@ -49,14 +49,15 @@ $(BUILD_DIR)/bench_%_jemalloc: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_
 	$(CXX) $(CPPFLAGS) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LIBS)
 
 $(JEMALLOC_STATIC_LIB):
-	@if [ ! -x "$(JEMALLOC_DIR)/autogen.sh" ]; then \
-		echo "missing $(JEMALLOC_DIR)/autogen.sh"; \
+	@if [ ! -x "$(JEMALLOC_DIR)/configure" ]; then \
+		echo "missing $(JEMALLOC_DIR)/configure"; \
 		exit 1; \
 	fi
-	@if [ ! -f "$(JEMALLOC_DIR)/Makefile" ] && [ ! -f "$(JEMALLOC_DIR)/config.status" ]; then \
-		cd "$(JEMALLOC_DIR)" && ./autogen.sh; \
+	mkdir -p $(JEMALLOC_OBJ_DIR)
+	@if [ ! -f "$(JEMALLOC_OBJ_DIR)/Makefile" ]; then \
+		cd "$(JEMALLOC_OBJ_DIR)" && ../configure --enable-autogen; \
 	fi
-	$(MAKE) -C $(JEMALLOC_DIR)
+	$(MAKE) -C $(JEMALLOC_OBJ_DIR) lib/libjemalloc.a
 
 $(STRING_REPORT_BENCH_BIN): $(STRING_REPORT_BENCH_SRC) $(HEADERS) Makefile $(JEMALLOC_STATIC_LIB) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) -I$(JEMALLOC_INCLUDE) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LOCAL_LIBS)
