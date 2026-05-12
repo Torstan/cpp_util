@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a repeatable `ImmutableTree` vs `ImmutableBlockTree` string benchmark that records jemalloc memory stats and generates a self-contained HTML report.
+**Goal:** Build a repeatable `ImmutableTree` vs `ImmutableBlockTree` string benchmark across the requested key/value byte lengths, record jemalloc memory stats, and generate a self-contained HTML report.
 
-**Architecture:** Add one dedicated C++ benchmark that emits machine-readable rows, one Python report generator that converts those rows to HTML, and Makefile targets that build local jemalloc from `../thirdparty/jemalloc`, compile the benchmark against it, run the benchmark, and generate the report. Existing immutable container APIs and correctness tests remain unchanged.
+**Architecture:** Add one dedicated C++ benchmark that emits machine-readable rows for `key_bytes=32|64` and `value_bytes=64|128|256|1024`, one Python report generator that converts those rows to HTML, and Makefile targets that build local jemalloc from `../thirdparty/jemalloc`, compile the benchmark against it, run the benchmark, and generate the report. Existing immutable container APIs and correctness tests remain unchanged.
 
 **Tech Stack:** C++17, local jemalloc source, GNU Make, Python 3 standard library, existing `immutable_container` headers.
 
@@ -13,7 +13,7 @@
 ## File Structure
 
 - Create: `immutable_container/benchmarks/block_tree_string_report_bench.cpp`
-  - Owns the string workload benchmark and jemalloc stat collection.
+  - Owns the string workload benchmark, byte-length matrix, and jemalloc stat collection.
   - Emits `env,...` and `case,...` rows only.
 - Create: `immutable_container/scripts/generate_block_tree_report.py`
   - Parses benchmark rows.
@@ -116,20 +116,39 @@ typename std::enable_if<!HasDebugStatsForTest<Tree>::value>::type AppendDebugSta
   os << ",nodes=,zip_lists=,entries=,entry_capacity=,avg_fill=,min_block_count=";
 }
 
-std::string MakeStringKey(std::size_t index) {
+std::string MakeStringKey(std::size_t index, std::size_t key_bytes) {
+  const std::string prefix = "key_";
+  if (key_bytes <= prefix.size()) {
+    throw std::invalid_argument("key_bytes must be greater than key prefix length");
+  }
   std::ostringstream os;
-  os << "key_" << std::setw(12) << std::setfill('0') << index;
+  os << prefix << std::setw(static_cast<int>(key_bytes - prefix.size()))
+     << std::setfill('0') << index;
   return os.str();
 }
 
-std::string MakeStringValue(const std::string& key) { return "value_for_" + key; }
+std::string MakeStringValue(std::size_t index, std::size_t value_bytes) {
+  const std::string prefix = "value_";
+  if (value_bytes <= prefix.size() + 12) {
+    throw std::invalid_argument("value_bytes must leave room for value prefix and index");
+  }
+  std::ostringstream os;
+  os << prefix << std::setw(12) << std::setfill('0') << index;
+  std::string value = os.str();
+  const std::string payload = "_payload";
+  while (value.size() < value_bytes) {
+    value += payload;
+  }
+  value.resize(value_bytes);
+  return value;
+}
 
-std::vector<Entry> MakeEntries(std::size_t size, const std::string& pattern) {
+std::vector<Entry> MakeEntries(std::size_t size, const std::string& pattern,
+                               std::size_t key_bytes, std::size_t value_bytes) {
   std::vector<Entry> entries;
   entries.reserve(size);
   for (std::size_t i = 0; i < size; ++i) {
-    std::string key = MakeStringKey(i);
-    entries.push_back({key, MakeStringValue(key)});
+    entries.push_back({MakeStringKey(i, key_bytes), MakeStringValue(i, value_bytes)});
   }
   if (pattern == "random") {
     std::mt19937 rng(0x5eed);
@@ -148,12 +167,12 @@ std::vector<std::string> MakeSortedKeys(const std::vector<Entry>& entries) {
   return keys;
 }
 
-std::vector<std::string> MakeMissingKeys(std::size_t size) {
+std::vector<std::string> MakeMissingKeys(std::size_t size, std::size_t key_bytes) {
   std::vector<std::string> keys;
   keys.reserve(size);
   const std::size_t offset = size + 1000000000ULL;
   for (std::size_t i = 0; i < size; ++i) {
-    keys.push_back(MakeStringKey(offset + i));
+    keys.push_back(MakeStringKey(offset + i, key_bytes));
   }
   return keys;
 }
@@ -235,10 +254,11 @@ JemallocDelta Delta(const JemallocStats& after, const JemallocStats& before) {
 }
 
 template <typename Tree>
-void RunCase(const std::string& name, const std::string& pattern, std::size_t size) {
-  const std::vector<Entry> entries = MakeEntries(size, pattern);
+void RunCase(const std::string& name, const std::string& pattern, std::size_t size,
+             std::size_t key_bytes, std::size_t value_bytes) {
+  const std::vector<Entry> entries = MakeEntries(size, pattern, key_bytes, value_bytes);
   const std::vector<std::string> sorted_keys = MakeSortedKeys(entries);
-  const std::vector<std::string> missing_keys = MakeMissingKeys(size);
+  const std::vector<std::string> missing_keys = MakeMissingKeys(size, key_bytes);
 
   FlushJemallocThreadCache();
   const JemallocStats before = ReadJemallocStats();
@@ -282,6 +302,7 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   });
 
   std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
+            << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
             << ",repetitions=" << repetitions << ",height=" << tree.Height()
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
             << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us
@@ -301,8 +322,12 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
 template <typename Tree>
 void RunTree(const std::string& name) {
   for (const char* pattern : {"sorted", "random"}) {
-    for (std::size_t size : {1, 10, 100, 1000, 10000, 100000}) {
-      RunCase<Tree>(name, pattern, size);
+    for (std::size_t key_bytes : {32, 64}) {
+      for (std::size_t value_bytes : {64, 128, 256, 1024}) {
+        for (std::size_t size : {1, 10, 100, 1000, 10000, 100000}) {
+          RunCase<Tree>(name, pattern, size, key_bytes, value_bytes);
+        }
+      }
     }
   }
 }
@@ -315,6 +340,8 @@ int main() {
               << ",allocator=jemalloc"
               << ",key_type=std::string"
               << ",value_type=std::string"
+              << ",key_bytes=32|64"
+              << ",value_bytes=64|128|256|1024"
               << ",sizes=1|10|100|1000|10000|100000"
               << ",patterns=sorted|random\n";
 
@@ -424,6 +451,8 @@ def read_rows(path):
         "name",
         "pattern",
         "size",
+        "key_bytes",
+        "value_bytes",
         "height",
         "build_us",
         "hit_contains_us",
@@ -497,7 +526,16 @@ def fmt_float(value):
 
 def sort_cases(cases):
     order = {"immutable_tree": 0, "block_tree_2048": 1, "block_tree_4096": 2}
-    return sorted(cases, key=lambda row: (row["pattern"], as_int(row, "size"), order.get(row["name"], 99)))
+    return sorted(
+        cases,
+        key=lambda row: (
+            row["pattern"],
+            as_int(row, "key_bytes"),
+            as_int(row, "value_bytes"),
+            as_int(row, "size"),
+            order.get(row["name"], 99),
+        ),
+    )
 
 
 def group_patterns(cases):
@@ -517,7 +555,15 @@ def ratio(candidate, baseline):
 def build_index(cases):
     result = {}
     for row in cases:
-        result[(row["pattern"], as_int(row, "size"), row["name"])] = row
+        result[
+            (
+                row["pattern"],
+                as_int(row, "key_bytes"),
+                as_int(row, "value_bytes"),
+                as_int(row, "size"),
+                row["name"],
+            )
+        ] = row
     return result
 
 
@@ -529,22 +575,27 @@ def make_observations(cases):
         return observations
     size = max_sizes[-1]
     for pattern in group_patterns(cases):
-        baseline = index.get((pattern, size, "immutable_tree"))
-        if baseline is None:
-            continue
-        base_build = as_int(baseline, "build_us")
-        base_alloc = as_int(baseline, "allocated_delta")
-        for name in ("block_tree_2048", "block_tree_4096"):
-            candidate = index.get((pattern, size, name))
-            if candidate is None:
-                continue
-            build_text = ratio(as_int(candidate, "build_us"), base_build)
-            alloc_text = ratio(as_int(candidate, "allocated_delta"), base_alloc)
-            observations.append(
-                f"For {pattern} insertion at {size:,} entries, {name} build time is "
-                f"{build_text or 'n/a'} of immutable_tree and allocated memory is "
-                f"{alloc_text or 'n/a'} of immutable_tree."
-            )
+        key_lengths = sorted({as_int(row, "key_bytes") for row in cases if row["pattern"] == pattern})
+        value_lengths = sorted({as_int(row, "value_bytes") for row in cases if row["pattern"] == pattern})
+        for key_bytes in key_lengths:
+            for value_bytes in value_lengths:
+                baseline = index.get((pattern, key_bytes, value_bytes, size, "immutable_tree"))
+                if baseline is None:
+                    continue
+                base_build = as_int(baseline, "build_us")
+                base_alloc = as_int(baseline, "allocated_delta")
+                for name in ("block_tree_2048", "block_tree_4096"):
+                    candidate = index.get((pattern, key_bytes, value_bytes, size, name))
+                    if candidate is None:
+                        continue
+                    build_text = ratio(as_int(candidate, "build_us"), base_build)
+                    alloc_text = ratio(as_int(candidate, "allocated_delta"), base_alloc)
+                    observations.append(
+                        f"For {pattern} insertion at {size:,} entries with {key_bytes}-byte keys "
+                        f"and {value_bytes}-byte values, {name} build time is "
+                        f"{build_text or 'n/a'} of immutable_tree and allocated memory is "
+                        f"{alloc_text or 'n/a'} of immutable_tree."
+                    )
     return observations
 
 
@@ -567,13 +618,16 @@ def performance_table(cases, pattern):
         size = as_int(row, "size")
         rows.append([
             row["name"],
+            fmt_int(as_int(row, "key_bytes")),
+            fmt_int(as_int(row, "value_bytes")),
             fmt_int(size),
             fmt_int(as_int(row, "height")),
             fmt_int(as_int(row, "repetitions")),
             *[fmt_us(as_int(row, field)) for field, _ in PERF_FIELDS],
         ])
     return table(
-        ["Implementation", "Size", "Height", "Lookup reps"] + [label for _, label in PERF_FIELDS],
+        ["Implementation", "Key bytes", "Value bytes", "Size", "Height", "Lookup reps"]
+        + [label for _, label in PERF_FIELDS],
         rows,
     )
 
@@ -582,13 +636,18 @@ def memory_table(cases, pattern):
     rows = []
     for row in sort_cases([case for case in cases if case["pattern"] == pattern]):
         size = as_int(row, "size")
-        cells = [row["name"], fmt_int(size)]
+        cells = [
+            row["name"],
+            fmt_int(as_int(row, "key_bytes")),
+            fmt_int(as_int(row, "value_bytes")),
+            fmt_int(size),
+        ]
         for field, _ in MEMORY_FIELDS:
             value = as_int(row, field)
             cells.append(fmt_bytes(value))
             cells.append(fmt_bytes_per_entry(value, size))
         rows.append(cells)
-    headers = ["Implementation", "Size"]
+    headers = ["Implementation", "Key bytes", "Value bytes", "Size"]
     for _, label in MEMORY_FIELDS:
         headers.extend([label, f"{label} per entry"])
     return table(headers, rows)
@@ -599,6 +658,8 @@ def structure_table(cases, pattern):
     for row in sort_cases([case for case in cases if case["pattern"] == pattern]):
         rows.append([
             row["name"],
+            fmt_int(as_int(row, "key_bytes")),
+            fmt_int(as_int(row, "value_bytes")),
             fmt_int(as_int(row, "size")),
             fmt_int(as_int(row, "nodes")),
             fmt_int(as_int(row, "zip_lists")),
@@ -610,6 +671,8 @@ def structure_table(cases, pattern):
     return table(
         [
             "Implementation",
+            "Key bytes",
+            "Value bytes",
             "Size",
             "Nodes",
             "Zip lists",
@@ -649,6 +712,8 @@ def render_report(env_rows, cases, args):
         ["Allocator", env.get("allocator", "jemalloc")],
         ["Key type", env.get("key_type", "std::string")],
         ["Value type", env.get("value_type", "std::string")],
+        ["Key byte lengths", env.get("key_bytes", "32|64")],
+        ["Value byte lengths", env.get("value_bytes", "64|128|256|1024")],
         ["Sizes", env.get("sizes", "1|10|100|1000|10000|100000")],
         ["Patterns", env.get("patterns", "sorted|random")],
     ]
@@ -711,7 +776,8 @@ def render_report(env_rows, cases, args):
 
 def self_test():
     row = parse_line(
-        "case,name=immutable_tree,pattern=sorted,size=1,height=1,build_us=10,"
+        "case,name=immutable_tree,pattern=sorted,size=1,key_bytes=32,value_bytes=64,"
+        "height=1,build_us=10,"
         "hit_contains_us=2,miss_contains_us=3,to_vector_us=4,allocated_delta=128,"
         "active_delta=4096,resident_delta=4096"
     )
@@ -904,7 +970,7 @@ cd immutable_container
 python3 - <<'PY'
 from pathlib import Path
 rows = [line for line in Path("build/immutable_tree_vs_block_tree_string.csv").read_text().splitlines() if line.startswith("case,")]
-expected = 3 * 2 * 6
+expected = 3 * 2 * 6 * 2 * 4
 print(f"case rows: {len(rows)}")
 raise SystemExit(0 if len(rows) == expected else 1)
 PY
@@ -913,7 +979,7 @@ PY
 Expected output includes:
 
 ```text
-case rows: 36
+case rows: 288
 ```
 
 - [ ] **Step 3: Confirm jemalloc memory columns are populated**
@@ -928,7 +994,7 @@ for line in Path("build/immutable_tree_vs_block_tree_string.csv").read_text().sp
     if not line.startswith("case,"):
         continue
     fields = dict(part.split("=", 1) for part in line.split(",")[1:] if "=" in part)
-    for key in ("allocated_delta", "active_delta", "resident_delta"):
+    for key in ("key_bytes", "value_bytes", "allocated_delta", "active_delta", "resident_delta"):
         int(fields[key])
 print("jemalloc memory fields parsed")
 PY
@@ -954,7 +1020,10 @@ required = [
     "jemalloc Memory",
     "Performance",
     "Block Structure",
+    "Key bytes",
+    "Value bytes",
     "100,000",
+    "1,024",
 ]
 missing = [item for item in required if item not in html]
 print("html sections checked")
@@ -1031,7 +1100,7 @@ Expected: commit succeeds if the plan was not already committed before implement
 ## Self-Review
 
 - Spec coverage:
-  - String key/value benchmark: Task 1.
+  - String key/value benchmark and requested key/value byte lengths: Task 1 and Task 2.
   - Sizes `1`, `10`, `100`, `1000`, `10000`, `100000`: Task 1.
   - Sorted and random insertion patterns: Task 1.
   - Performance timing for build, hit contains, miss contains, and traversal: Task 1 and Task 2.
