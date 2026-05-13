@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #include <string_view>
@@ -664,16 +666,16 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   using ValueStorage = typename std::aligned_storage<sizeof(Value), alignof(Value)>::type;
 
   struct KeyRef {
-    std::uint32_t offset = 0;
-    std::uint32_t size = 0;
+    std::uint16_t offset_or_index = 0;
+    std::uint16_t size_or_marker = 0;
   };
 
-  static constexpr std::uint32_t kExternalKeyMask = 0x80000000u;
-  static constexpr std::uint32_t kKeyOffsetMask = ~kExternalKeyMask;
+  static constexpr std::uint16_t kExternalKeyMarker =
+      std::numeric_limits<std::uint16_t>::max();
   static constexpr std::size_t kEntrySlotBytes = sizeof(KeyRef) + sizeof(ValueStorage);
   static constexpr std::size_t kEstimatedInlineKeyBytes = 64;
   static constexpr std::size_t kFixedBytes =
-      sizeof(std::size_t) * 2 + sizeof(std::vector<PackedString>);
+      sizeof(std::uint16_t) * 2 + sizeof(std::unique_ptr<std::vector<PackedString>>);
   static constexpr std::size_t kUsableBytes = TargetBytes > kFixedBytes ? TargetBytes - kFixedBytes : 1;
 
   static constexpr std::size_t ComputeCapacity() {
@@ -690,6 +692,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static constexpr std::size_t kCapacity = ComputeCapacity();
   static constexpr std::size_t kPayloadBytes = ComputePayloadBytes();
 
+  static_assert(kCapacity <= std::numeric_limits<std::uint16_t>::max(),
+                "ZipList packed map capacity must fit uint16_t");
+  static_assert(kPayloadBytes < kExternalKeyMarker,
+                "ZipList packed map payload must fit uint16_t key refs");
+
   Value* ValueSlot(std::size_t index) {
     return reinterpret_cast<Value*>(&value_storage_[index]);
   }
@@ -701,11 +708,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   std::size_t RemainingPayload() const { return kPayloadBytes - payload_used_; }
 
   static bool KeyRefIsExternal(const KeyRef& ref) {
-    return (ref.offset & kExternalKeyMask) != 0;
+    return ref.size_or_marker == kExternalKeyMarker;
   }
 
   static std::size_t KeyRefOffset(const KeyRef& ref) {
-    return ref.offset & kKeyOffsetMask;
+    return ref.offset_or_index;
   }
 
   static bool UsesExternalKey(const Key& key) {
@@ -775,10 +782,10 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   Key BorrowedKeyAt(std::size_t index) const {
     const KeyRef& ref = key_refs_[index];
     if (KeyRefIsExternal(ref)) {
-      const PackedString& stored = external_keys_[KeyRefOffset(ref)];
+      const PackedString& stored = (*external_keys_)[KeyRefOffset(ref)];
       return Key::Borrowed(stored.Data(), stored.Size());
     }
-    return Key::Borrowed(payload_ + KeyRefOffset(ref), ref.size);
+    return Key::Borrowed(payload_ + KeyRefOffset(ref), ref.size_or_marker);
   }
 
   Key OwnedKeyAt(std::size_t index) const {
@@ -787,18 +794,14 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   }
 
   KeyRef StoreKey(const PackedString& text) {
-    if (text.Size() > kKeyOffsetMask) {
-      throw std::logic_error("ZipList key exceeds compact key reference");
-    }
-
     if (UsesExternalKey(text)) {
-      if (external_keys_.size() > kKeyOffsetMask) {
+      auto& external_keys = ExternalKeys();
+      if (external_keys.size() >= kExternalKeyMarker) {
         throw std::logic_error("ZipList external key index exceeds compact key reference");
       }
-      const std::size_t index = external_keys_.size();
-      external_keys_.push_back(text);
-      return KeyRef{static_cast<std::uint32_t>(index) | kExternalKeyMask,
-                    static_cast<std::uint32_t>(text.Size())};
+      const std::size_t index = external_keys.size();
+      external_keys.push_back(text);
+      return KeyRef{static_cast<std::uint16_t>(index), kExternalKeyMarker};
     }
 
     if (text.Size() > RemainingPayload()) {
@@ -809,9 +812,9 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     if (text.Size() != 0) {
       std::memcpy(payload_ + offset, text.Data(), text.Size());
     }
-    payload_used_ += text.Size();
-    return KeyRef{static_cast<std::uint32_t>(offset),
-                  static_cast<std::uint32_t>(text.Size())};
+    payload_used_ = static_cast<std::uint16_t>(payload_used_ + text.Size());
+    return KeyRef{static_cast<std::uint16_t>(offset),
+                  static_cast<std::uint16_t>(text.Size())};
   }
 
   void ConstructBack(const Key& key, const Value& value) {
@@ -822,14 +825,14 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       throw std::logic_error("ZipList payload capacity exceeded");
     }
 
-    const std::size_t previous_payload_used = payload_used_;
-    const std::size_t previous_external_key_count = external_keys_.size();
+    const std::uint16_t previous_payload_used = payload_used_;
+    const std::size_t previous_external_key_count = ExternalKeyCount();
     const KeyRef key_ref = StoreKey(key);
     try {
       new (ValueSlot(count_)) Value(value);
     } catch (...) {
       payload_used_ = previous_payload_used;
-      external_keys_.resize(previous_external_key_count);
+      RestoreExternalKeyCount(previous_external_key_count);
       throw;
     }
     key_refs_[count_] = key_ref;
@@ -864,16 +867,52 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       --count_;
       ValueSlot(count_)->~Value();
     }
-    external_keys_.clear();
+    external_keys_.reset();
     payload_used_ = 0;
   }
 
   KeyRef key_refs_[kCapacity] = {};
   ValueStorage value_storage_[kCapacity];
   char payload_[kPayloadBytes] = {};
-  std::size_t count_ = 0;
-  std::size_t payload_used_ = 0;
-  std::vector<PackedString> external_keys_;
+  std::uint16_t count_ = 0;
+  std::uint16_t payload_used_ = 0;
+  std::unique_ptr<std::vector<PackedString>> external_keys_;
+
+  std::vector<PackedString>& ExternalKeys() {
+    if (external_keys_ == nullptr) {
+      external_keys_ = std::make_unique<std::vector<PackedString>>();
+    }
+    return *external_keys_;
+  }
+
+  std::size_t ExternalKeyCount() const {
+    return external_keys_ == nullptr ? 0 : external_keys_->size();
+  }
+
+  void RestoreExternalKeyCount(std::size_t count) {
+    if (external_keys_ == nullptr) {
+      return;
+    }
+    external_keys_->resize(count);
+    if (count == 0) {
+      external_keys_.reset();
+    }
+  }
+
+ public:
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  static constexpr std::size_t DebugKeyRefBytesForTest() { return sizeof(KeyRef); }
+
+  static constexpr std::size_t DebugCountFieldBytesForTest() {
+    return sizeof(ZipList::count_);
+  }
+
+  static constexpr std::size_t DebugPayloadUsedFieldBytesForTest() {
+    return sizeof(ZipList::payload_used_);
+  }
+
+  static constexpr bool DebugHasEagerExternalKeyVectorForTest() { return false; }
+#endif
 };
 
 template <std::size_t TargetBytes>
