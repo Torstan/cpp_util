@@ -12,11 +12,22 @@ import subprocess
 import sys
 
 
-EXPECTED_IMPLEMENTATIONS = ("immutable_tree", "block_tree_2048", "block_tree_4096")
+EXPECTED_IMPLEMENTATIONS = (
+    "map_tree_std_string",
+    "map_block_tree_2048_std_string",
+    "map_block_tree_4096_std_string",
+    "map_tree_packed_string",
+    "map_block_tree_2048_packed_string",
+    "map_block_tree_4096_packed_string",
+    "set_tree_packed_string",
+    "set_block_tree_4096_packed_string",
+)
 EXPECTED_PATTERNS = ("sorted", "random")
 EXPECTED_SIZES = (1, 10, 100, 1000, 10000, 100000)
 EXPECTED_KEY_BYTES = (32, 64)
-EXPECTED_VALUE_BYTES = (64, 128, 256, 1024)
+EXPECTED_MAP_VALUE_BYTES = (64, 128, 256, 1024)
+EXPECTED_SET_VALUE_BYTES = (0,)
+PATTERN_ORDER = {pattern: index for index, pattern in enumerate(EXPECTED_PATTERNS)}
 
 REQUIRED_CASE_FIELDS = {
     "name",
@@ -60,10 +71,68 @@ OPTIONAL_FLOAT_FIELDS = {
     "avg_fill",
 }
 
+BLOCK_STRUCTURE_FIELDS = OPTIONAL_INT_FIELDS | OPTIONAL_FLOAT_FIELDS
+
 IMPLEMENTATION_ORDER = {
-    "immutable_tree": 0,
-    "block_tree_2048": 1,
-    "block_tree_4096": 2,
+    "map_tree_std_string": 0,
+    "map_block_tree_2048_std_string": 1,
+    "map_block_tree_4096_std_string": 2,
+    "map_tree_packed_string": 3,
+    "map_block_tree_2048_packed_string": 4,
+    "map_block_tree_4096_packed_string": 5,
+    "set_tree_packed_string": 6,
+    "set_block_tree_4096_packed_string": 7,
+}
+
+IMPLEMENTATION_LABELS = {
+    "map_tree_std_string": "Map Tree std",
+    "map_block_tree_2048_std_string": "Map Block 2048 std",
+    "map_block_tree_4096_std_string": "Map Block 4096 std",
+    "map_tree_packed_string": "Map Tree Packed",
+    "map_block_tree_2048_packed_string": "Map Block 2048 Packed",
+    "map_block_tree_4096_packed_string": "Map Block 4096 Packed",
+    "set_tree_packed_string": "Set Tree Packed",
+    "set_block_tree_4096_packed_string": "Set Block 4096 Packed",
+}
+
+IMPLEMENTATION_FAMILIES = {
+    "map_tree_std_string": "map_std_string",
+    "map_block_tree_2048_std_string": "map_std_string",
+    "map_block_tree_4096_std_string": "map_std_string",
+    "map_tree_packed_string": "map_packed_string",
+    "map_block_tree_2048_packed_string": "map_packed_string",
+    "map_block_tree_4096_packed_string": "map_packed_string",
+    "set_tree_packed_string": "set_packed_string",
+    "set_block_tree_4096_packed_string": "set_packed_string",
+}
+
+FAMILY_LABELS = {
+    "map_std_string": "ImtMap std::string",
+    "map_packed_string": "ImtMap PackedString",
+    "set_packed_string": "ImtSet PackedString",
+}
+
+COMPARISON_GROUPS = (
+    (
+        "map_std_string",
+        "map_tree_std_string",
+        ("map_block_tree_2048_std_string", "map_block_tree_4096_std_string"),
+    ),
+    (
+        "map_packed_string",
+        "map_tree_packed_string",
+        ("map_block_tree_2048_packed_string", "map_block_tree_4096_packed_string"),
+    ),
+    (
+        "set_packed_string",
+        "set_tree_packed_string",
+        ("set_block_tree_4096_packed_string",),
+    ),
+)
+
+FAMILY_ORDER = {
+    family: index
+    for index, (family, _baseline, _candidates) in enumerate(COMPARISON_GROUPS)
 }
 
 DEFAULT_OUTPUT = "reports/immutable_tree_vs_block_tree.html"
@@ -79,9 +148,14 @@ CHART_METRICS = (
 )
 
 SERIES_COLORS = {
-    "immutable_tree": "#2563eb",
-    "block_tree_2048": "#dc2626",
-    "block_tree_4096": "#059669",
+    "map_tree_std_string": "#2563eb",
+    "map_block_tree_2048_std_string": "#dc2626",
+    "map_block_tree_4096_std_string": "#059669",
+    "map_tree_packed_string": "#7c3aed",
+    "map_block_tree_2048_packed_string": "#ea580c",
+    "map_block_tree_4096_packed_string": "#0891b2",
+    "set_tree_packed_string": "#4f46e5",
+    "set_block_tree_4096_packed_string": "#16a34a",
 }
 
 
@@ -144,7 +218,56 @@ def _coerce_case(row, source):
             coerced[field] = float(coerced[field])
         except ValueError as exc:
             raise ReportError(f"{source}: field {field} must be a float") from exc
+    if coerced["name"] not in EXPECTED_IMPLEMENTATIONS:
+        raise ReportError(f"{source}: unknown implementation {coerced['name']!r}")
+    if coerced["pattern"] not in EXPECTED_PATTERNS:
+        raise ReportError(f"{source}: unknown pattern {coerced['pattern']!r}")
+    if coerced["key_bytes"] not in EXPECTED_KEY_BYTES:
+        raise ReportError(f"{source}: unexpected key_bytes {coerced['key_bytes']}")
+    if not valid_value_bytes_for_name(coerced["name"], coerced["value_bytes"]):
+        raise ReportError(
+            f"{source}: unexpected value_bytes {coerced['value_bytes']} for {coerced['name']}"
+        )
+    if is_block_tree_case(coerced["name"]):
+        missing_structure = sorted(
+            field
+            for field in BLOCK_STRUCTURE_FIELDS
+            if field not in coerced or coerced[field] == ""
+        )
+        if missing_structure:
+            raise ReportError(
+                f"{source}: block tree row missing structure fields: "
+                f"{', '.join(missing_structure)}"
+            )
     return coerced
+
+
+def implementation_label(name):
+    return IMPLEMENTATION_LABELS.get(name, name)
+
+
+def family_for_name(name):
+    return IMPLEMENTATION_FAMILIES[name]
+
+
+def is_set_case(name):
+    return family_for_name(name).startswith("set_")
+
+
+def is_block_tree_case(name):
+    return "_block_tree_" in name
+
+
+def expected_value_bytes_for_name(name):
+    return EXPECTED_SET_VALUE_BYTES if is_set_case(name) else EXPECTED_MAP_VALUE_BYTES
+
+
+def valid_value_bytes_for_name(name, value_bytes):
+    return value_bytes in expected_value_bytes_for_name(name)
+
+
+def family_implementations(family):
+    return tuple(name for name in EXPECTED_IMPLEMENTATIONS if family_for_name(name) == family)
 
 
 def expected_case_keys():
@@ -154,7 +277,7 @@ def expected_case_keys():
         for pattern in EXPECTED_PATTERNS
         for size in EXPECTED_SIZES
         for key_bytes in EXPECTED_KEY_BYTES
-        for value_bytes in EXPECTED_VALUE_BYTES
+        for value_bytes in expected_value_bytes_for_name(name)
     }
 
 
@@ -269,8 +392,10 @@ def fmt_metric_value(field, value):
 
 
 def sort_key(row):
+    family = family_for_name(row["name"])
     return (
-        row["pattern"],
+        FAMILY_ORDER.get(family, 99),
+        PATTERN_ORDER.get(row["pattern"], 99),
         row["key_bytes"],
         row["value_bytes"],
         row["size"],
@@ -282,7 +407,12 @@ def sort_key(row):
 def group_cases(cases):
     groups = {}
     for row in sorted(cases, key=sort_key):
-        key = (row["pattern"], row["key_bytes"], row["value_bytes"])
+        key = (
+            family_for_name(row["name"]),
+            row["pattern"],
+            row["key_bytes"],
+            row["value_bytes"],
+        )
         groups.setdefault(key, []).append(row)
     return groups
 
@@ -317,27 +447,36 @@ def _ratio_value(candidate, baseline, field):
 
 def build_observations(cases):
     observations = []
-    for (pattern, key_bytes, value_bytes), rows in group_cases(cases).items():
+    comparison_by_family = {
+        family: (baseline, candidates)
+        for family, baseline, candidates in COMPARISON_GROUPS
+    }
+    for (family, pattern, key_bytes, value_bytes), rows in group_cases(cases).items():
+        if family not in comparison_by_family:
+            continue
+        baseline_name, candidate_names = comparison_by_family[family]
         largest_size = max(row["size"] for row in rows)
         rows_at_size = {
             row["name"]: row
             for row in rows
             if row["size"] == largest_size
         }
-        baseline = rows_at_size.get("immutable_tree")
+        baseline = rows_at_size.get(baseline_name)
         if not baseline:
             continue
-        for name in ("block_tree_2048", "block_tree_4096"):
+        for name in candidate_names:
             candidate = rows_at_size.get(name)
             if not candidate:
                 continue
             observations.append(
                 {
+                    "family": family,
                     "pattern": pattern,
                     "key_bytes": key_bytes,
                     "value_bytes": value_bytes,
                     "size": largest_size,
                     "name": name,
+                    "baseline": baseline_name,
                     "build": _ratio_text(candidate, baseline, "build_us"),
                     "hit": _ratio_text(candidate, baseline, "hit_contains_us"),
                     "miss": _ratio_text(candidate, baseline, "miss_contains_us"),
@@ -356,31 +495,35 @@ def summary_rows(cases):
         (row["pattern"], row["key_bytes"], row["value_bytes"], row["size"], row["name"]): row
         for row in cases
     }
-    for pattern in EXPECTED_PATTERNS:
-        for key_bytes in EXPECTED_KEY_BYTES:
-            for value_bytes in EXPECTED_VALUE_BYTES:
-                size = max(EXPECTED_SIZES)
-                baseline = index.get((pattern, key_bytes, value_bytes, size, "immutable_tree"))
-                if baseline is None:
-                    continue
-                for name in ("block_tree_2048", "block_tree_4096"):
-                    row = index.get((pattern, key_bytes, value_bytes, size, name))
-                    if row is None:
+    size = max(EXPECTED_SIZES)
+    for family, baseline_name, candidate_names in COMPARISON_GROUPS:
+        for pattern in EXPECTED_PATTERNS:
+            for key_bytes in EXPECTED_KEY_BYTES:
+                for value_bytes in expected_value_bytes_for_name(baseline_name):
+                    baseline = index.get((pattern, key_bytes, value_bytes, size, baseline_name))
+                    if baseline is None:
                         continue
-                    rows.append(
-                        [
-                            pattern,
-                            _n(fmt_int(key_bytes)),
-                            _n(fmt_int(value_bytes)),
-                            name,
-                            _n(fmt_int(size)),
-                            _n(_ratio_value(row, baseline, "build_us")),
-                            _n(_ratio_value(row, baseline, "hit_contains_us")),
-                            _n(_ratio_value(row, baseline, "miss_contains_us")),
-                            _n(_ratio_value(row, baseline, "to_vector_us")),
-                            _n(_ratio_value(row, baseline, "allocated_delta")),
-                        ]
-                    )
+                    for name in candidate_names:
+                        if not valid_value_bytes_for_name(name, value_bytes):
+                            continue
+                        row = index.get((pattern, key_bytes, value_bytes, size, name))
+                        if row is None:
+                            continue
+                        rows.append(
+                            [
+                                FAMILY_LABELS[family],
+                                pattern,
+                                _n(fmt_int(key_bytes)),
+                                _n(fmt_int(value_bytes)),
+                                implementation_label(name),
+                                _n(fmt_int(size)),
+                                _n(_ratio_value(row, baseline, "build_us")),
+                                _n(_ratio_value(row, baseline, "hit_contains_us")),
+                                _n(_ratio_value(row, baseline, "miss_contains_us")),
+                                _n(_ratio_value(row, baseline, "to_vector_us")),
+                                _n(_ratio_value(row, baseline, "allocated_delta")),
+                            ]
+                        )
     return rows
 
 
@@ -419,26 +562,14 @@ def _n(value):
     return Numeric(value)
 
 
-def _optional_int(row, field):
-    value = row.get(field)
-    if value == "" or value is None:
-        return "not applicable"
-    return _n(fmt_int(value))
-
-
-def _optional_float(row, field):
-    value = row.get(field)
-    if value == "" or value is None:
-        return "not applicable"
-    return _n(fmt_float(value))
-
-
 def performance_rows(cases):
     rows = []
     for row in sorted(cases, key=sort_key):
         rows.append(
             [
-                row["name"],
+                FAMILY_LABELS[family_for_name(row["name"])],
+                implementation_label(row["name"]),
+                row["pattern"],
                 _n(fmt_int(row["key_bytes"])),
                 _n(fmt_int(row["value_bytes"])),
                 _n(fmt_int(row["size"])),
@@ -456,7 +587,9 @@ def memory_rows(cases):
     for row in sorted(cases, key=sort_key):
         rows.append(
             [
-                row["name"],
+                FAMILY_LABELS[family_for_name(row["name"])],
+                implementation_label(row["name"]),
+                row["pattern"],
                 _n(fmt_int(row["key_bytes"])),
                 _n(fmt_int(row["value_bytes"])),
                 _n(fmt_int(row["size"])),
@@ -472,46 +605,51 @@ def memory_rows(cases):
 def structure_rows(cases):
     rows = []
     for row in sorted(cases, key=sort_key):
+        if row.get("nodes") in ("", None):
+            continue
         rows.append(
             [
-                row["name"],
+                FAMILY_LABELS[family_for_name(row["name"])],
+                implementation_label(row["name"]),
                 _n(fmt_int(row["key_bytes"])),
                 _n(fmt_int(row["value_bytes"])),
                 _n(fmt_int(row["size"])),
                 row["pattern"],
                 _n(fmt_int(row["height"])),
-                _optional_int(row, "nodes"),
-                _optional_int(row, "zip_lists"),
-                _optional_int(row, "entries"),
-                _optional_int(row, "entry_capacity"),
-                _optional_float(row, "avg_fill"),
-                _optional_int(row, "min_block_count"),
+                _n(fmt_int(row["nodes"])),
+                _n(fmt_int(row["zip_lists"])),
+                _n(fmt_int(row["entries"])),
+                _n(fmt_int(row["entry_capacity"])),
+                _n(fmt_float(row["avg_fill"])),
+                _n(fmt_int(row["min_block_count"])),
             ]
         )
     return rows
 
 
-def _series_for_group(rows, field):
-    by_name = {name: [] for name in EXPECTED_IMPLEMENTATIONS}
+def _series_for_group(rows, field, names):
+    by_name = {name: [] for name in names}
     for row in rows:
+        if row["name"] not in by_name:
+            continue
         by_name[row["name"]].append((row["size"], row[field]))
     for values in by_name.values():
         values.sort()
     return by_name
 
 
-def _chart_svg(rows, field, title, unit):
-    series = _series_for_group(rows, field)
+def _chart_svg(rows, field, title, unit, names):
+    series = _series_for_group(rows, field, names)
     values = [value for points in series.values() for _, value in points]
     if not values:
         return ""
 
-    width = 620
-    height = 300
+    width = 700
+    height = 330
     left = 64
     right = 24
     top = 34
-    bottom = 56
+    bottom = 92
     min_x = math.log10(min(EXPECTED_SIZES))
     max_x = math.log10(max(EXPECTED_SIZES))
     max_y = max(values)
@@ -558,8 +696,8 @@ def _chart_svg(rows, field, title, unit):
             f'text-anchor="end">{_html_escape(fmt_metric_value(field, int(value)))}</text>'
         )
 
-    legend_x = left
-    for name in EXPECTED_IMPLEMENTATIONS:
+    legend_y = height - 54
+    for index, name in enumerate(names):
         color = SERIES_COLORS[name]
         points = series[name]
         if points:
@@ -571,17 +709,18 @@ def _chart_svg(rows, field, title, unit):
             for size, value in points:
                 parts.append(
                     f'<circle cx="{x_pos(size):.1f}" cy="{y_pos(value):.1f}" r="3" '
-                    f'fill="{color}"><title>{_html_escape(name)} {fmt_int(size)}: '
+                    f'fill="{color}"><title>{_html_escape(implementation_label(name))} {fmt_int(size)}: '
                     f'{_html_escape(fmt_metric_value(field, value))}</title></circle>'
                 )
+        legend_x = left + (index % 2) * 300
+        current_legend_y = legend_y + (index // 2) * 16
         parts.append(
-            f'<rect x="{legend_x}" y="{height - 24}" width="10" height="10" fill="{color}"/>'
+            f'<rect x="{legend_x}" y="{current_legend_y - 9}" width="10" height="10" fill="{color}"/>'
         )
         parts.append(
-            f'<text x="{legend_x + 14}" y="{height - 15}" class="legend">'
-            f'{_html_escape(name)}</text>'
+            f'<text x="{legend_x + 14}" y="{current_legend_y}" class="legend">'
+            f'{_html_escape(implementation_label(name))}</text>'
         )
-        legend_x += 150
 
     parts.append(f'<text x="{width - right}" y="{height - 34}" class="axis-label" text-anchor="end">entries, log scale</text>')
     parts.append(f'<text x="{left}" y="{top - 8}" class="axis-label">{_html_escape(unit)}</text>')
@@ -589,17 +728,20 @@ def _chart_svg(rows, field, title, unit):
     return "\n".join(parts)
 
 
-def _chart_group_html(pattern, key_bytes, value_bytes, rows):
+def _chart_group_html(family, pattern, key_bytes, value_bytes, rows):
+    present = {row["name"] for row in rows}
+    names = tuple(name for name in family_implementations(family) if name in present)
     charts = []
     for field, label, unit in CHART_METRICS:
         charts.append(
             '<div class="chart-card">'
-            + _chart_svg(rows, field, label, unit)
+            + _chart_svg(rows, field, label, unit, names)
             + "</div>"
         )
+    value_label = "set keys only" if is_set_case(names[0]) else f"{fmt_int(value_bytes)}-byte values"
     heading = (
-        f"{pattern} inserts, {fmt_int(key_bytes)}-byte keys, "
-        f"{fmt_int(value_bytes)}-byte values"
+        f"{FAMILY_LABELS[family]}: {pattern} inserts, "
+        f"{fmt_int(key_bytes)}-byte keys, {value_label}"
     )
     return (
         f"<section class=\"chart-group\"><h3>{_html_escape(heading)}</h3>"
@@ -609,8 +751,8 @@ def _chart_group_html(pattern, key_bytes, value_bytes, rows):
 
 def charts_html(cases):
     sections = []
-    for (pattern, key_bytes, value_bytes), rows in group_cases(cases).items():
-        sections.append(_chart_group_html(pattern, key_bytes, value_bytes, rows))
+    for (family, pattern, key_bytes, value_bytes), rows in group_cases(cases).items():
+        sections.append(_chart_group_html(family, pattern, key_bytes, value_bytes, rows))
     return "\n".join(sections)
 
 
@@ -623,11 +765,16 @@ def metadata(env, cases, args, input_label):
         "benchmark command": args.bench_command,
         "jemalloc path": args.jemalloc_path,
     }
-    for key in ("allocator", "key_type", "value_type"):
+    for key in ("allocator", "api", "key_type", "value_type", "key_types", "value_types"):
         if key in env:
             values[key.replace("_", " ")] = env[key]
     values["key byte lengths"] = ", ".join(fmt_int(v) for v in sorted({r["key_bytes"] for r in cases}))
-    values["value byte lengths"] = ", ".join(fmt_int(v) for v in sorted({r["value_bytes"] for r in cases}))
+    map_value_bytes = sorted({r["value_bytes"] for r in cases if not is_set_case(r["name"])})
+    set_value_bytes = sorted({r["value_bytes"] for r in cases if is_set_case(r["name"])})
+    if map_value_bytes:
+        values["map value byte lengths"] = ", ".join(fmt_int(v) for v in map_value_bytes)
+    if set_value_bytes:
+        values["set value byte lengths"] = ", ".join(fmt_int(v) for v in set_value_bytes)
     values["sizes"] = ", ".join(fmt_int(v) for v in sorted({r["size"] for r in cases}))
     values["patterns"] = ", ".join(sorted({r["pattern"] for r in cases}))
     return values
@@ -640,31 +787,33 @@ def _metadata_html(items):
     return "<table class=\"metadata\"><tbody>\n" + "\n".join(rows) + "\n</tbody></table>"
 
 
-def _comparison_phrase(label, comparison):
+def _comparison_phrase(label, comparison, baseline):
     if comparison == "same":
-        return f"{label} same as immutable_tree"
+        return f"{label} same as {baseline}"
     if comparison == "n/a":
-        return f"{label} not comparable with immutable_tree"
-    return f"{label} {comparison} than immutable_tree"
+        return f"{label} not comparable with {baseline}"
+    return f"{label} {comparison} than {baseline}"
 
 
 def _observations_html(observations):
     if not observations:
-        return "<p>No complete immutable_tree/block_tree comparison groups were found.</p>"
+        return "<p>No complete tree/block comparison groups were found.</p>"
     items = []
     for obs in observations:
+        baseline = implementation_label(obs["baseline"])
         comparisons = [
-            _comparison_phrase("build", obs["build"]),
-            _comparison_phrase("hit", obs["hit"]),
-            _comparison_phrase("miss", obs["miss"]),
-            _comparison_phrase("to_vector", obs["vector"]),
-            _comparison_phrase("allocated", obs["allocated"]),
+            _comparison_phrase("build", obs["build"], baseline),
+            _comparison_phrase("hit", obs["hit"], baseline),
+            _comparison_phrase("miss", obs["miss"], baseline),
+            _comparison_phrase("to_vector", obs["vector"], baseline),
+            _comparison_phrase("allocated", obs["allocated"], baseline),
         ]
         items.append(
             "<li>"
             + _html_escape(
-                f"{obs['pattern']} keys={obs['key_bytes']} values={obs['value_bytes']} "
-                f"size={obs['size']}: {obs['name']} {', '.join(comparisons)}."
+                f"{FAMILY_LABELS[obs['family']]} {obs['pattern']} "
+                f"keys={obs['key_bytes']} values={obs['value_bytes']} size={obs['size']}: "
+                f"{implementation_label(obs['name'])} {', '.join(comparisons)}."
             )
             + "</li>"
         )
@@ -673,21 +822,20 @@ def _observations_html(observations):
 
 def interpretation_html():
     items = [
-        "The string workload measures std::string containers, not inline byte arrays. "
-        "For the requested 32/64-byte keys and 64/128/256/1024-byte values, string "
-        "character buffers are heap allocated and dominate jemalloc allocated memory.",
-        "ImmutableBlockTree reduces AVL node count and groups many string objects per "
-        "node, but each entry still owns separate key/value character buffers. Memory "
-        "savings are therefore most visible when payloads are small, and become small "
-        "relative to payload size for 1024-byte values.",
-        "Block structure fields are marked not applicable for ImmutableTree because it "
-        "does not use zip-list blocks.",
+        "Map rows exercise the public ImtMap wrapper; set rows exercise the public "
+        "ImtSet wrapper with value_bytes=0.",
+        "std::string map rows still allocate key and value character buffers per entry, "
+        "so payload bytes can dominate jemalloc allocated memory.",
+        "PackedString rows use a smaller string object and packed block storage for "
+        "block-tree cases, which should make block-level memory savings more visible.",
+        "Block structure tables only include block-tree backed rows because tree-backed "
+        "rows do not expose zip-list block stats.",
     ]
     return "<ul>\n" + "\n".join(f"<li>{_html_escape(item)}</li>" for item in items) + "\n</ul>"
 
 
 def render_html(env, cases, args, input_label):
-    title = "Immutable Tree vs Block Tree Benchmark Report"
+    title = "ImtMap and ImtSet Tree vs Block Tree Benchmark Report"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -772,7 +920,7 @@ li {{ margin: 6px 0; }}
 <main>
 <h1>{_html_escape(title)}</h1>
 <p>Self-contained report generated from line-oriented benchmark rows.</p>
-<p class="note">Memory charts use jemalloc deltas from one fresh benchmark process per case. Block-only structural fields are marked "not applicable" for ImmutableTree because it does not store zip-list blocks.</p>
+<p class="note">Memory charts use jemalloc deltas from one fresh benchmark process per case. Charts are grouped by API and string representation so unrelated map/set cases do not create empty series.</p>
 
 <h2>Metadata</h2>
 <div class="panel">
@@ -791,7 +939,7 @@ li {{ margin: 6px 0; }}
 
 <h2>Largest-Size Ratios</h2>
 <div class="panel">
-{_table(["Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Build", "Hit contains", "Miss contains", "To vector", "Allocated"], summary_rows(cases))}
+{_table(["Family", "Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Build", "Hit contains", "Miss contains", "To vector", "Allocated"], summary_rows(cases))}
 </div>
 
 <h2>Charts</h2>
@@ -799,17 +947,17 @@ li {{ margin: 6px 0; }}
 
 <h2>Performance</h2>
 <div class="panel">
-{_table(["Implementation", "Key bytes", "Value bytes", "Size", "Build", "Hit contains", "Miss contains", "To vector"], performance_rows(cases))}
+{_table(["Family", "Implementation", "Pattern", "Key bytes", "Value bytes", "Size", "Build", "Hit contains", "Miss contains", "To vector"], performance_rows(cases))}
 </div>
 
 <h2>jemalloc Memory</h2>
 <div class="panel">
-{_table(["Implementation", "Key bytes", "Value bytes", "Size", "Allocated delta", "Allocated / entry", "Active delta", "Resident delta"], memory_rows(cases))}
+{_table(["Family", "Implementation", "Pattern", "Key bytes", "Value bytes", "Size", "Allocated delta", "Allocated / entry", "Active delta", "Resident delta"], memory_rows(cases))}
 </div>
 
 <h2>Block Structure</h2>
 <div class="panel">
-{_table(["Implementation", "Key bytes", "Value bytes", "Size", "Pattern", "Height", "Nodes", "Zip lists", "Entries", "Entry capacity", "Average fill", "Minimum block count"], structure_rows(cases))}
+{_table(["Family", "Implementation", "Key bytes", "Value bytes", "Size", "Pattern", "Height", "Nodes", "Zip lists", "Entries", "Entry capacity", "Average fill", "Minimum block count"], structure_rows(cases))}
 </div>
 </main>
 </body>
@@ -831,7 +979,7 @@ def _run_benchmark(command):
     for name in EXPECTED_IMPLEMENTATIONS:
         for pattern in EXPECTED_PATTERNS:
             for key_bytes in EXPECTED_KEY_BYTES:
-                for value_bytes in EXPECTED_VALUE_BYTES:
+                for value_bytes in expected_value_bytes_for_name(name):
                     for size in EXPECTED_SIZES:
                         completed = subprocess.run(
                             f"{command} --name {name} --pattern {pattern} --size {size} "
@@ -856,7 +1004,7 @@ def write_report(output_path, html_text):
 
 def self_test():
     row_type, fields = parse_line(
-        "case,name=immutable_tree,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+        "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
         "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
         "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384"
     )
@@ -865,14 +1013,31 @@ def self_test():
     assert fields["value_bytes"] == "64"
     env, cases = _read_rows_from_iter(
         [
-            "env,allocator=jemalloc,key_type=string,value_type=string\n",
-            "case,name=immutable_tree,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+            "env,allocator=jemalloc,api=ImtMap,key_types=std::string|PackedString,"
+            "value_types=std::string|PackedString\n",
+            "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
-            "case,name=block_tree_2048,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+            "case,name=map_block_tree_2048_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=5,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384,"
             "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
+            "min_block_count=1\n",
+            "case,name=map_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+            "height=10,build_us=100,hit_contains_us=200,miss_contains_us=300,"
+            "to_vector_us=400,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            "case,name=map_block_tree_4096_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
+            "height=4,build_us=90,hit_contains_us=180,miss_contains_us=280,"
+            "to_vector_us=350,allocated_delta=2048,active_delta=4096,resident_delta=8192,"
+            "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
+            "min_block_count=1\n",
+            "case,name=set_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=0,"
+            "height=10,build_us=100,hit_contains_us=200,miss_contains_us=300,"
+            "to_vector_us=400,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            "case,name=set_block_tree_4096_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=0,"
+            "height=4,build_us=90,hit_contains_us=180,miss_contains_us=280,"
+            "to_vector_us=350,allocated_delta=2048,active_delta=4096,resident_delta=8192,"
+            "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
             "min_block_count=1\n",
         ],
         "<self-test>",
@@ -883,6 +1048,25 @@ def self_test():
     assert cases[0]["value_bytes"] == 64
     assert cases[1]["nodes"] == 7
     assert cases[1]["avg_fill"] == 0.8333
+    try:
+        _read_rows_from_iter(
+            [
+                "case,name=map_block_tree_2048_std_string,pattern=random,size=1000,"
+                "key_bytes=32,value_bytes=64,height=5,build_us=1234,"
+                "hit_contains_us=56,miss_contains_us=78,to_vector_us=900,"
+                "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            ],
+            "<self-test-missing-structure>",
+            require_complete_matrix=False,
+        )
+        raise AssertionError("block tree structure validation unexpectedly passed")
+    except ReportError as exc:
+        assert "block tree row missing structure fields" in str(exc)
+    keys = expected_case_keys()
+    assert ("set_tree_packed_string", "sorted", 1, 32, 0) in keys
+    assert ("set_tree_packed_string", "sorted", 1, 32, 64) not in keys
+    assert ("map_tree_std_string", "sorted", 1, 32, 64) in keys
+    assert ("map_tree_std_string", "sorted", 1, 32, 0) not in keys
     assert fmt_int(1234567) == "1,234,567"
     assert fmt_us(1234) == "1.23 ms"
     assert fmt_bytes(2048) == "2.00 KiB"
@@ -897,11 +1081,14 @@ def self_test():
     assert "Entry capacity" in html_text
     assert "Average fill" in html_text
     assert "Minimum block count" in html_text
-    assert "same as immutable_tree" in html_text
-    assert "same than immutable_tree" not in html_text
+    assert "<th>Map Value Byte Lengths</th>" in html_text
+    assert "<th>Set Value Byte Lengths</th>" in html_text
+    assert "<th>Value Byte Lengths</th>" not in html_text
+    assert "same as Map Tree std" in html_text
+    assert "same than Map Tree std" not in html_text
     assert "Charts" in html_text
     assert "chart-svg" in html_text
-    assert "not applicable" in html_text
+    assert "Map Block 2048 Packed" not in html_text
     try:
         validate_complete_matrix(cases, "<self-test>")
         raise AssertionError("partial matrix validation unexpectedly passed")
