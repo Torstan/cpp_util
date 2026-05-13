@@ -45,6 +45,13 @@ REQUIRED_CASE_FIELDS = {
     "resident_delta",
 }
 
+MAP_READ_FIELDS = {
+    "find_hit_us",
+    "find_miss_us",
+    "find_hit_value_size_us",
+    "find_hit_value_scan_us",
+}
+
 INT_FIELDS = {
     "size",
     "key_bytes",
@@ -147,6 +154,13 @@ CHART_METRICS = (
     ("resident_delta", "Resident memory", "bytes"),
 )
 
+MAP_READ_METRICS = (
+    ("find_hit_us", "Find hit", "us"),
+    ("find_miss_us", "Find miss", "us"),
+    ("find_hit_value_size_us", "Find value size", "us"),
+    ("find_hit_value_scan_us", "Find value scan", "us"),
+)
+
 SERIES_COLORS = {
     "map_tree_std_string": "#2563eb",
     "map_block_tree_2048_std_string": "#dc2626",
@@ -228,6 +242,19 @@ def _coerce_case(row, source):
         raise ReportError(
             f"{source}: unexpected value_bytes {coerced['value_bytes']} for {coerced['name']}"
         )
+    if is_map_case(coerced["name"]):
+        missing_read = sorted(
+            field for field in MAP_READ_FIELDS if field not in coerced or coerced[field] == ""
+        )
+        if missing_read:
+            raise ReportError(
+                f"{source}: map row missing read fields: {', '.join(missing_read)}"
+            )
+        for field in MAP_READ_FIELDS:
+            try:
+                coerced[field] = int(coerced[field], 10)
+            except ValueError as exc:
+                raise ReportError(f"{source}: field {field} must be an integer") from exc
     if is_block_tree_case(coerced["name"]):
         missing_structure = sorted(
             field
@@ -252,6 +279,10 @@ def family_for_name(name):
 
 def is_set_case(name):
     return family_for_name(name).startswith("set_")
+
+
+def is_map_case(name):
+    return family_for_name(name).startswith("map_")
 
 
 def is_block_tree_case(name):
@@ -527,6 +558,44 @@ def summary_rows(cases):
     return rows
 
 
+def map_read_summary_rows(cases):
+    rows = []
+    index = {
+        (row["pattern"], row["key_bytes"], row["value_bytes"], row["size"], row["name"]): row
+        for row in cases
+        if is_map_case(row["name"])
+    }
+    size = max(EXPECTED_SIZES)
+    for family, baseline_name, candidate_names in COMPARISON_GROUPS:
+        if not family.startswith("map_"):
+            continue
+        for pattern in EXPECTED_PATTERNS:
+            for key_bytes in EXPECTED_KEY_BYTES:
+                for value_bytes in expected_value_bytes_for_name(baseline_name):
+                    baseline = index.get((pattern, key_bytes, value_bytes, size, baseline_name))
+                    if baseline is None:
+                        continue
+                    for name in candidate_names:
+                        row = index.get((pattern, key_bytes, value_bytes, size, name))
+                        if row is None:
+                            continue
+                        rows.append(
+                            [
+                                FAMILY_LABELS[family],
+                                pattern,
+                                _n(fmt_int(key_bytes)),
+                                _n(fmt_int(value_bytes)),
+                                implementation_label(name),
+                                _n(fmt_int(size)),
+                                _n(_ratio_value(row, baseline, "find_hit_us")),
+                                _n(_ratio_value(row, baseline, "find_miss_us")),
+                                _n(_ratio_value(row, baseline, "find_hit_value_size_us")),
+                                _n(_ratio_value(row, baseline, "find_hit_value_scan_us")),
+                            ]
+                        )
+    return rows
+
+
 def _html_escape(value):
     return html.escape(str(value), quote=True)
 
@@ -577,6 +646,28 @@ def performance_rows(cases):
                 _n(fmt_us(row["hit_contains_us"])),
                 _n(fmt_us(row["miss_contains_us"])),
                 _n(fmt_us(row["to_vector_us"])),
+            ]
+        )
+    return rows
+
+
+def map_read_rows(cases):
+    rows = []
+    for row in sorted(cases, key=sort_key):
+        if not is_map_case(row["name"]):
+            continue
+        rows.append(
+            [
+                FAMILY_LABELS[family_for_name(row["name"])],
+                implementation_label(row["name"]),
+                row["pattern"],
+                _n(fmt_int(row["key_bytes"])),
+                _n(fmt_int(row["value_bytes"])),
+                _n(fmt_int(row["size"])),
+                _n(fmt_us(row["find_hit_us"])),
+                _n(fmt_us(row["find_miss_us"])),
+                _n(fmt_us(row["find_hit_value_size_us"])),
+                _n(fmt_us(row["find_hit_value_scan_us"])),
             ]
         )
     return rows
@@ -728,11 +819,11 @@ def _chart_svg(rows, field, title, unit, names):
     return "\n".join(parts)
 
 
-def _chart_group_html(family, pattern, key_bytes, value_bytes, rows):
+def _chart_group_html(family, pattern, key_bytes, value_bytes, rows, metrics=CHART_METRICS):
     present = {row["name"] for row in rows}
     names = tuple(name for name in family_implementations(family) if name in present)
     charts = []
-    for field, label, unit in CHART_METRICS:
+    for field, label, unit in metrics:
         charts.append(
             '<div class="chart-card">'
             + _chart_svg(rows, field, label, unit, names)
@@ -753,6 +844,23 @@ def charts_html(cases):
     sections = []
     for (family, pattern, key_bytes, value_bytes), rows in group_cases(cases).items():
         sections.append(_chart_group_html(family, pattern, key_bytes, value_bytes, rows))
+    return "\n".join(sections)
+
+
+def map_read_charts_html(cases):
+    sections = []
+    map_cases = [row for row in cases if is_map_case(row["name"])]
+    for (family, pattern, key_bytes, value_bytes), rows in group_cases(map_cases).items():
+        sections.append(
+            _chart_group_html(
+                family,
+                pattern,
+                key_bytes,
+                value_bytes,
+                rows,
+                metrics=MAP_READ_METRICS,
+            )
+        )
     return "\n".join(sections)
 
 
@@ -942,12 +1050,25 @@ li {{ margin: 6px 0; }}
 {_table(["Family", "Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Build", "Hit contains", "Miss contains", "To vector", "Allocated"], summary_rows(cases))}
 </div>
 
+<h2>Map Find Largest-Size Ratios</h2>
+<div class="panel">
+{_table(["Family", "Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Find hit", "Find miss", "Find value size", "Find value scan"], map_read_summary_rows(cases))}
+</div>
+
 <h2>Charts</h2>
 {charts_html(cases)}
+
+<h2>Map Find Charts</h2>
+{map_read_charts_html(cases)}
 
 <h2>Performance</h2>
 <div class="panel">
 {_table(["Family", "Implementation", "Pattern", "Key bytes", "Value bytes", "Size", "Build", "Hit contains", "Miss contains", "To vector"], performance_rows(cases))}
+</div>
+
+<h2>Map Find Performance</h2>
+<div class="panel">
+{_table(["Family", "Implementation", "Pattern", "Key bytes", "Value bytes", "Size", "Find hit", "Find miss", "Find value size", "Find value scan"], map_read_rows(cases))}
 </div>
 
 <h2>jemalloc Memory</h2>
@@ -1006,7 +1127,9 @@ def self_test():
     row_type, fields = parse_line(
         "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
         "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
-        "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384"
+        "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
+        "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
+        "allocated_delta=4096,active_delta=8192,resident_delta=16384"
     )
     assert row_type == "case"
     assert fields["key_bytes"] == "32"
@@ -1017,18 +1140,26 @@ def self_test():
             "value_types=std::string|PackedString\n",
             "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
-            "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
+            "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
+            "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             "case,name=map_block_tree_2048_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=5,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
-            "to_vector_us=900,allocated_delta=4096,active_delta=8192,resident_delta=16384,"
+            "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
+            "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
+            "allocated_delta=4096,active_delta=8192,resident_delta=16384,"
             "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
             "min_block_count=1\n",
             "case,name=map_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=10,build_us=100,hit_contains_us=200,miss_contains_us=300,"
-            "to_vector_us=400,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            "to_vector_us=400,find_hit_us=21,find_miss_us=22,"
+            "find_hit_value_size_us=23,find_hit_value_scan_us=24,"
+            "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             "case,name=map_block_tree_4096_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
             "height=4,build_us=90,hit_contains_us=180,miss_contains_us=280,"
-            "to_vector_us=350,allocated_delta=2048,active_delta=4096,resident_delta=8192,"
+            "to_vector_us=350,find_hit_us=19,find_miss_us=20,"
+            "find_hit_value_size_us=21,find_hit_value_scan_us=22,"
+            "allocated_delta=2048,active_delta=4096,resident_delta=8192,"
             "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
             "min_block_count=1\n",
             "case,name=set_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=0,"
@@ -1046,14 +1177,32 @@ def self_test():
     assert env["allocator"] == "jemalloc"
     assert cases[0]["key_bytes"] == 32
     assert cases[0]["value_bytes"] == 64
+    assert cases[0]["find_hit_us"] == 11
+    assert cases[0]["find_hit_value_scan_us"] == 14
     assert cases[1]["nodes"] == 7
     assert cases[1]["avg_fill"] == 0.8333
+    try:
+        _read_rows_from_iter(
+            [
+                "case,name=map_tree_std_string,pattern=random,size=1000,"
+                "key_bytes=32,value_bytes=64,height=5,build_us=1234,"
+                "hit_contains_us=56,miss_contains_us=78,to_vector_us=900,"
+                "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
+            ],
+            "<self-test-missing-map-read>",
+            require_complete_matrix=False,
+        )
+        raise AssertionError("map read field validation unexpectedly passed")
+    except ReportError as exc:
+        assert "map row missing read fields" in str(exc)
     try:
         _read_rows_from_iter(
             [
                 "case,name=map_block_tree_2048_std_string,pattern=random,size=1000,"
                 "key_bytes=32,value_bytes=64,height=5,build_us=1234,"
                 "hit_contains_us=56,miss_contains_us=78,to_vector_us=900,"
+                "find_hit_us=11,find_miss_us=12,find_hit_value_size_us=13,"
+                "find_hit_value_scan_us=14,"
                 "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             ],
             "<self-test-missing-structure>",
@@ -1087,6 +1236,9 @@ def self_test():
     assert "same as Map Tree std" in html_text
     assert "same than Map Tree std" not in html_text
     assert "Charts" in html_text
+    assert "Map Find Performance" in html_text
+    assert "Find hit" in html_text
+    assert "Find value scan" in html_text
     assert "chart-svg" in html_text
     assert "Map Block 2048 Packed" not in html_text
     try:

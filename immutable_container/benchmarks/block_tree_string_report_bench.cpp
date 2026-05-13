@@ -83,6 +83,24 @@ immutable_container::PackedString MakeText<immutable_container::PackedString>(st
   return immutable_container::PackedString(std::string_view(text.data(), text.size()));
 }
 
+std::size_t TextSize(const std::string& text) { return text.size(); }
+
+std::size_t TextSize(const immutable_container::PackedString& text) { return text.Size(); }
+
+const char* TextData(const std::string& text) { return text.data(); }
+
+const char* TextData(const immutable_container::PackedString& text) { return text.Data(); }
+
+template <typename Text>
+std::size_t ScanTextBytes(const Text& text) {
+  const char* data = TextData(text);
+  std::size_t total = 0;
+  for (std::size_t index = 0; index < TextSize(text); ++index) {
+    total += static_cast<unsigned char>(data[index]);
+  }
+  return total;
+}
+
 std::vector<std::size_t> MakeIndexes(std::size_t size, const std::string& pattern) {
   std::vector<std::size_t> indexes;
   indexes.reserve(size);
@@ -262,6 +280,56 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
     g_size_sink += misses;
   });
 
+  const long long find_hit_us = TimeMicros([&] {
+    std::size_t hits = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : hit_keys) {
+        if (map.Find(key) != nullptr) {
+          ++hits;
+        }
+      }
+    }
+    g_size_sink += hits;
+  });
+
+  const long long find_miss_us = TimeMicros([&] {
+    std::size_t misses = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : miss_keys) {
+        if (map.Find(key) == nullptr) {
+          ++misses;
+        }
+      }
+    }
+    g_size_sink += misses;
+  });
+
+  const long long find_hit_value_size_us = TimeMicros([&] {
+    std::size_t total_size = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : hit_keys) {
+        const Text* value = map.Find(key);
+        if (value) {
+          total_size += TextSize(*value);
+        }
+      }
+    }
+    g_size_sink += total_size;
+  });
+
+  const long long find_hit_value_scan_us = TimeMicros([&] {
+    std::size_t total = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : hit_keys) {
+        const Text* value = map.Find(key);
+        if (value) {
+          total += ScanTextBytes(*value);
+        }
+      }
+    }
+    g_size_sink += total;
+  });
+
   const long long to_vector_us = TimeMicros([&] {
     const auto values = map.ToVector();
     g_size_sink += values.size();
@@ -271,7 +339,11 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
             << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
             << ",repetitions=" << repetitions << ",height=" << map.Height()
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
-            << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us;
+            << ",miss_contains_us=" << miss_contains_us << ",find_hit_us=" << find_hit_us
+            << ",find_miss_us=" << find_miss_us
+            << ",find_hit_value_size_us=" << find_hit_value_size_us
+            << ",find_hit_value_scan_us=" << find_hit_value_scan_us
+            << ",to_vector_us=" << to_vector_us;
   PrintMemoryFields(start_stats, after_build_stats);
   PrintDebugStats(map, std::cout);
   std::cout << "\n";
