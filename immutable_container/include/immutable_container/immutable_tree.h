@@ -2,9 +2,12 @@
 #define IMMUTABLE_CONTAINER_IMMUTABLE_TREE_H_
 
 #include <algorithm>
+#include <cstdint>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 #include <unordered_set>
 #endif
@@ -28,17 +31,17 @@ class ImmutableTree {
     Value value;
     NodePtr left;
     NodePtr right;
-    int height;
-    std::size_t size;
+    std::uint32_t size;
+    std::uint16_t height;
 
     Node(const Key& node_key, const Value& node_value, NodePtr node_left,
-         NodePtr node_right, int node_height, std::size_t node_size)
+         NodePtr node_right, std::uint32_t node_size, std::uint16_t node_height)
         : key(node_key),
           value(node_value),
           left(std::move(node_left)),
           right(std::move(node_right)),
-          height(node_height),
-          size(node_size) {
+          size(node_size),
+          height(node_height) {
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
       ++live_node_count_;
 #endif
@@ -129,6 +132,16 @@ class ImmutableTree {
   }
 
   static std::size_t DebugLiveNodeCountForTest() { return Node::LiveNodeCountForTest(); }
+
+  static constexpr std::size_t DebugNodeBytesForTest() { return sizeof(Node); }
+
+  static constexpr std::size_t DebugSizeFieldBytesForTest() {
+    return sizeof(std::declval<Node>().size);
+  }
+
+  static constexpr std::size_t DebugHeightFieldBytesForTest() {
+    return sizeof(std::declval<Node>().height);
+  }
 #endif
 
  private:
@@ -142,8 +155,21 @@ class ImmutableTree {
 
   static NodePtr MakeNode(const Key& key, const Value& value, NodePtr left, NodePtr right) {
     const int height = 1 + std::max(Height(left), Height(right));
-    const std::size_t size = 1 + Size(left) + Size(right);
-    return NodePtr::Adopt(new Node(key, value, std::move(left), std::move(right), height, size));
+    if (height > static_cast<int>(std::numeric_limits<std::uint16_t>::max())) {
+      throw std::length_error("ImmutableTree node height exceeds uint16_t max");
+    }
+
+    const std::size_t left_size = Size(left);
+    const std::size_t right_size = Size(right);
+    constexpr std::size_t max_size = std::numeric_limits<std::uint32_t>::max();
+    if (left_size > max_size - 1 || right_size > max_size - 1 - left_size) {
+      throw std::length_error("ImmutableTree node size exceeds uint32_t max");
+    }
+
+    const std::size_t size = 1 + left_size + right_size;
+    return NodePtr::Adopt(new Node(key, value, std::move(left), std::move(right),
+                                   static_cast<std::uint32_t>(size),
+                                   static_cast<std::uint16_t>(height)));
   }
 
   static int BalanceFactor(const NodePtr& node) {

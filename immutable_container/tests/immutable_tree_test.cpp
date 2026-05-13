@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "immutable_container/immutable_tree.h"
+#include "immutable_container/packed_string.h"
 #include "immutable_container/ref_count_policy.h"
 
 namespace {
@@ -255,6 +256,32 @@ void TestIntrusiveRefCountPolicyParameterAndLiveNodes() {
 #endif
 }
 
+void TestPackedStringTreeNodeLayoutBudget() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableTree<PackedString, PackedString>;
+
+  RequireEqual(Tree::DebugSizeFieldBytesForTest(), std::size_t{4},
+               "ImmutableTree internal size field is uint32_t");
+  Require(Tree::DebugHeightFieldBytesForTest() <= 2,
+          "ImmutableTree internal height field is no larger than uint16_t");
+  Require(Tree::DebugNodeBytesForTest() <= 64,
+          "packed ImmutableTree node stays within 64 bytes");
+#endif
+}
+
+void TestTreeSizePublicTypeAndValue() {
+  immutable_container::ImmutableTree<int, int> tree;
+  for (int i = 0; i < 1000; ++i) {
+    auto next = tree.Insert(i, i * 10);
+    Require(next.has_value(), "tree inserts unique key");
+    tree = *next;
+  }
+
+  const std::size_t size = tree.Size();
+  RequireEqual(size, std::size_t{1000}, "Tree Size returns std::size_t value");
+}
+
 }  // namespace
 
 int main() {
@@ -267,6 +294,8 @@ int main() {
     TestAvlBalancingForSortedInput();
     TestSharedNodeObservation();
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
+    TestPackedStringTreeNodeLayoutBudget();
+    TestTreeSizePublicTypeAndValue();
     std::cout << "immutable_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
