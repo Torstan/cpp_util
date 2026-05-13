@@ -89,12 +89,12 @@ class ImmutableBlockTree {
   const Value* Find(const Key& key) const {
     NodePtr node = root_;
     while (node) {
-      if (Less(key, node->block.Front().first)) {
+      if (Less(key, node->block.FrontKey())) {
         node = node->left;
-      } else if (Less(node->block.Back().first, key)) {
+      } else if (Less(node->block.BackKey(), key)) {
         node = node->right;
       } else {
-        return node->block.Find(key, comp_);
+        return node->block.FindValue(key, comp_);
       }
     }
     return nullptr;
@@ -321,7 +321,7 @@ class ImmutableBlockTree {
       return MakeNode(Block::FromSortedEntries({Entry{key, value}}), nullptr, nullptr);
     }
 
-    if (Less(key, node->block.Front().first)) {
+    if (Less(key, node->block.FrontKey())) {
       if (!node->left) {
         return InsertInNodeBlock(node, 0, key, value);
       }
@@ -332,7 +332,7 @@ class ImmutableBlockTree {
       return NormalizeNode(node->block, *new_left, node->right);
     }
 
-    if (Less(node->block.Back().first, key)) {
+    if (Less(node->block.BackKey(), key)) {
       if (!node->right) {
         return InsertInNodeBlock(node, node->block.Count(), key, value);
       }
@@ -344,7 +344,7 @@ class ImmutableBlockTree {
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
-    if (index < node->block.Count() && Equivalent(node->block[index].first, key)) {
+    if (index < node->block.Count() && Equivalent(node->block.KeyAt(index), key)) {
       return std::nullopt;
     }
 
@@ -357,7 +357,7 @@ class ImmutableBlockTree {
       return std::nullopt;
     }
 
-    if (Less(key, node->block.Front().first)) {
+    if (Less(key, node->block.FrontKey())) {
       auto new_left = UpdateNode(node->left, key, value);
       if (!new_left.has_value()) {
         return std::nullopt;
@@ -365,7 +365,7 @@ class ImmutableBlockTree {
       return MakeBalanced(node->block, *new_left, node->right);
     }
 
-    if (Less(node->block.Back().first, key)) {
+    if (Less(node->block.BackKey(), key)) {
       auto new_right = UpdateNode(node->right, key, value);
       if (!new_right.has_value()) {
         return std::nullopt;
@@ -374,7 +374,7 @@ class ImmutableBlockTree {
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
-    if (index == node->block.Count() || !Equivalent(node->block[index].first, key)) {
+    if (index == node->block.Count() || !Equivalent(node->block.KeyAt(index), key)) {
       return std::nullopt;
     }
 
@@ -386,7 +386,7 @@ class ImmutableBlockTree {
       return std::nullopt;
     }
 
-    if (Less(key, node->block.Front().first)) {
+    if (Less(key, node->block.FrontKey())) {
       auto new_left = EraseNode(node->left, key);
       if (!new_left.has_value()) {
         return std::nullopt;
@@ -394,7 +394,7 @@ class ImmutableBlockTree {
       return NormalizeNode(node->block, *new_left, node->right);
     }
 
-    if (Less(node->block.Back().first, key)) {
+    if (Less(node->block.BackKey(), key)) {
       auto new_right = EraseNode(node->right, key);
       if (!new_right.has_value()) {
         return std::nullopt;
@@ -403,7 +403,7 @@ class ImmutableBlockTree {
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
-    if (index == node->block.Count() || !Equivalent(node->block[index].first, key)) {
+    if (index == node->block.Count() || !Equivalent(node->block.KeyAt(index), key)) {
       return std::nullopt;
     }
 
@@ -428,14 +428,14 @@ class ImmutableBlockTree {
       return MakeNode(Block::FromSortedEntries({Entry{key, value}}), nullptr, nullptr);
     }
 
-    if (Less(key, node->block.Front().first)) {
+    if (Less(key, node->block.FrontKey())) {
       if (!node->left) {
         return InsertInNodeBlock(node, 0, key, value);
       }
       return NormalizeNode(node->block, SetNode(node->left, key, value), node->right);
     }
 
-    if (Less(node->block.Back().first, key)) {
+    if (Less(node->block.BackKey(), key)) {
       if (!node->right) {
         return InsertInNodeBlock(node, node->block.Count(), key, value);
       }
@@ -443,7 +443,7 @@ class ImmutableBlockTree {
     }
 
     const std::size_t index = node->block.LowerBound(key, comp_);
-    if (index < node->block.Count() && Equivalent(node->block[index].first, key)) {
+    if (index < node->block.Count() && Equivalent(node->block.KeyAt(index), key)) {
       return MakeBalanced(node->block.WithUpdated(index, value), node->left, node->right);
     }
 
@@ -478,22 +478,22 @@ class ImmutableBlockTree {
       return result;
     }
 
-    if (min_key != nullptr && !Less(*min_key, node->block.Front().first)) {
+    if (min_key != nullptr && !Less(*min_key, node->block.FrontKey())) {
       result.valid = false;
     }
-    if (max_key != nullptr && !Less(node->block.Back().first, *max_key)) {
+    if (max_key != nullptr && !Less(node->block.BackKey(), *max_key)) {
       result.valid = false;
     }
     for (std::size_t index = 1; index < node->block.Count(); ++index) {
-      if (!Less(node->block[index - 1].first, node->block[index].first)) {
+      if (!Less(node->block.KeyAt(index - 1), node->block.KeyAt(index))) {
         result.valid = false;
       }
     }
 
     const auto left =
-        ValidateInvariants(node->left, min_key, &node->block.Front().first);
+        ValidateInvariants(node->left, min_key, &node->block.FrontKey());
     const auto right =
-        ValidateInvariants(node->right, &node->block.Back().first, max_key);
+        ValidateInvariants(node->right, &node->block.BackKey(), max_key);
     const int expected_height = 1 + std::max(left.height, right.height);
     const std::size_t expected_size = node->block.Count() + left.size + right.size;
     const int height_delta =

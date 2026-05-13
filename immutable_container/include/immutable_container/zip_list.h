@@ -68,6 +68,14 @@ class ZipList {
 
   const Entry& Back() const { return (*this)[count_ - 1]; }
 
+  const Key& FrontKey() const { return Front().first; }
+
+  const Key& BackKey() const { return Back().first; }
+
+  const Key& KeyAt(std::size_t index) const { return (*this)[index].first; }
+
+  const Value& ValueAt(std::size_t index) const { return (*this)[index].second; }
+
   template <typename Comp>
   std::size_t LowerBound(const Key& key, const Comp& comp) const {
     std::size_t first = 0;
@@ -102,6 +110,11 @@ class ZipList {
   const Value* Find(const Key& key, const Comp& comp) const {
     const Entry* entry = FindEntry(key, comp);
     return entry == nullptr ? nullptr : &entry->second;
+  }
+
+  template <typename Comp>
+  const Value* FindValue(const Key& key, const Comp& comp) const {
+    return Find(key, comp);
   }
 
   ZipList WithInserted(std::size_t index, const Key& key, const Value& value) const {
