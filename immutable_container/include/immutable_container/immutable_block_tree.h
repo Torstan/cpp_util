@@ -494,10 +494,13 @@ class ImmutableBlockTree {
       return result;
     }
 
-    if (min_key != nullptr && !Less(*min_key, node->block.FrontKey())) {
+    const Key front_key = node->block.FrontKey();
+    const Key back_key = node->block.BackKey();
+
+    if (min_key != nullptr && !Less(*min_key, front_key)) {
       result.valid = false;
     }
-    if (max_key != nullptr && !Less(node->block.BackKey(), *max_key)) {
+    if (max_key != nullptr && !Less(back_key, *max_key)) {
       result.valid = false;
     }
     for (std::size_t index = 1; index < node->block.Count(); ++index) {
@@ -506,10 +509,8 @@ class ImmutableBlockTree {
       }
     }
 
-    const auto left =
-        ValidateInvariants(node->left, min_key, &node->block.FrontKey());
-    const auto right =
-        ValidateInvariants(node->right, &node->block.BackKey(), max_key);
+    const auto left = ValidateInvariants(node->left, min_key, &front_key);
+    const auto right = ValidateInvariants(node->right, &back_key, max_key);
     const int expected_height = 1 + std::max(left.height, right.height);
     const std::size_t expected_size = node->block.Count() + left.size + right.size;
     const int height_delta =
