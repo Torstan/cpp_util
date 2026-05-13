@@ -326,11 +326,19 @@ void TestPackedStringSetZipList() {
   Require(block.FindValue(Ps("delta"), std::less<PackedString>()) == nullptr,
           "packed set FindValue miss");
 
-  const auto inserted = block.WithInserted(1, Ps("aardvark"), UnitValue{});
+  const auto inserted = block.WithInserted(0, Ps("aardvark"), UnitValue{});
   RequireEqual(inserted.Count(), std::size_t{4}, "packed set inserted count");
-  Require(inserted.KeyAt(1) == Ps("aardvark"), "packed set inserted key");
+  Require(inserted.KeyAt(0) == Ps("aardvark"), "packed set inserted key");
+  Require(inserted.ValueAt(0) == UnitValue{}, "packed set ValueAt returns unit value");
 
-  const auto erased = inserted.WithErased(1);
+  const auto updated = inserted.WithUpdated(0, UnitValue{});
+  Require(updated.FindValue(Ps("aardvark"), std::less<PackedString>()) != nullptr,
+          "packed set WithUpdated keeps key");
+  Require(updated.FindValue(Ps("aardvark"), std::less<PackedString>()) ==
+              updated.FindValue(Ps("bravo"), std::less<PackedString>()),
+          "packed set FindValue returns stable unit pointer");
+
+  const auto erased = updated.WithErased(0);
   Require(erased.FindValue(Ps("aardvark"), std::less<PackedString>()) == nullptr,
           "packed set erase removes key");
 
@@ -365,6 +373,7 @@ void TestPackedStringSetPayloadBudgetAndLifetime() {
   Require(oversized.FindValue(RepeatedPacked('x', 300), std::less<PackedString>()) !=
               nullptr,
           "packed set stores single oversized key");
+  Require(!oversized.Full(), "packed set oversized key leaves payload non-full");
   Require(!oversized.CanInsert(Ps("small"), UnitValue{}),
           "packed set refuses to add normal key beside oversized key");
   Require(!left.CanInsert(RepeatedPacked('y', 300), UnitValue{}),
@@ -386,6 +395,21 @@ void TestPackedStringSetPayloadBudgetAndLifetime() {
   Require(insert_blocks[1].FrontKey() == RepeatedPacked('b', 300),
           "packed set oversized split block key");
   Require(insert_blocks[2].FrontKey() == Ps("c"), "packed set final split block key");
+
+  const auto updated_blocks = split_base.SplitWithUpdatedBlocks(1, UnitValue{});
+  RequireEqual(updated_blocks.size(), std::size_t{1},
+               "packed set split update keeps fitting keys together");
+
+  const auto small_left = ZipList::FromSortedEntries({
+      {Ps("a"), UnitValue{}},
+  });
+  const auto small_right = ZipList::FromSortedEntries({
+      {Ps("b"), UnitValue{}},
+  });
+  Require(ZipList::CanMerge(small_left, small_right), "packed set small blocks can merge");
+  const auto merged = ZipList::Merged(small_left, small_right);
+  RequireEqual(merged.Count(), std::size_t{2}, "packed set merged count");
+  Require(merged.BackKey() == Ps("b"), "packed set merged ordering");
 
   ZipList copied = left;
   Require(copied.FrontKey() == RepeatedPacked('a', 80),
