@@ -315,6 +315,17 @@ class ImmutableBlockTree {
                           node->right);
   }
 
+  NodePtr UpdateInNodeBlock(const NodePtr& node, std::size_t index,
+                            const Value& value) const {
+    if (node->block.CanUpdate(index, value)) {
+      return MakeBalanced(node->block.WithUpdated(index, value), node->left,
+                          node->right);
+    }
+
+    return BuildSplitNode(node->block.SplitWithUpdated(index, value), node->left,
+                          node->right);
+  }
+
   std::optional<NodePtr> InsertNode(const NodePtr& node, const Key& key,
                                     const Value& value) const {
     if (!node) {
@@ -378,7 +389,7 @@ class ImmutableBlockTree {
       return std::nullopt;
     }
 
-    return MakeBalanced(node->block.WithUpdated(index, value), node->left, node->right);
+    return UpdateInNodeBlock(node, index, value);
   }
 
   std::optional<NodePtr> EraseNode(const NodePtr& node, const Key& key) const {
@@ -444,7 +455,7 @@ class ImmutableBlockTree {
 
     const std::size_t index = node->block.LowerBound(key, comp_);
     if (index < node->block.Count() && Equivalent(node->block.KeyAt(index), key)) {
-      return MakeBalanced(node->block.WithUpdated(index, value), node->left, node->right);
+      return UpdateInNodeBlock(node, index, value);
     }
 
     return InsertInNodeBlock(node, index, key, value);

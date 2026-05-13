@@ -4,10 +4,12 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "immutable_container/immutable_block_tree.h"
+#include "immutable_container/packed_string.h"
 
 namespace {
 
@@ -22,6 +24,14 @@ void Require(bool condition, const std::string& message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+immutable_container::PackedString Pbs(std::string_view text) {
+  return immutable_container::PackedString(text);
+}
+
+immutable_container::PackedString RepeatedPackedString(char ch, std::size_t size) {
+  return immutable_container::PackedString(std::string(size, ch));
 }
 
 template <typename Tree>
@@ -346,6 +356,31 @@ void TestRandomizedMapModelMaintainsInvariants() {
   }
 }
 
+void TestPackedStringBlockTreeUpdateCanSplitBlock() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 1024>;
+
+  Tree tree;
+  tree = *tree.Insert(Pbs("a"), RepeatedPackedString('a', 150));
+  tree = *tree.Insert(Pbs("b"), RepeatedPackedString('b', 150));
+
+  const auto updated = tree.Update(Pbs("b"), RepeatedPackedString('B', 450));
+  Require(updated.has_value(), "packed map update can split payload-heavy block");
+  Require(*tree.Find(Pbs("b")) == RepeatedPackedString('b', 150),
+          "packed map update leaves old value unchanged");
+  Require(*updated->Find(Pbs("b")) == RepeatedPackedString('B', 450),
+          "packed map update stores larger value");
+
+  const auto set = updated->Set(Pbs("a"), RepeatedPackedString('A', 2000));
+  Require(*set.Find(Pbs("a")) == RepeatedPackedString('A', 2000),
+          "packed map set can isolate oversized updated value");
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(set.DebugValidateInvariantsForTest(), "packed map update split invariants");
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -360,6 +395,7 @@ int main() {
     TestSplitCreatesMultipleBlocksAndStats();
     TestSharedNodeObservation();
     TestRandomizedMapModelMaintainsInvariants();
+    TestPackedStringBlockTreeUpdateCanSplitBlock();
     std::cout << "immutable_block_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
