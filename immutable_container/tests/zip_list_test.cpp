@@ -2,9 +2,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "immutable_container/packed_string.h"
 #include "immutable_container/zip_list.h"
 
 namespace {
@@ -40,6 +42,10 @@ struct CountingValue {
 };
 
 int CountingValue::live_count = 0;
+
+immutable_container::PackedString Ps(std::string_view text) {
+  return immutable_container::PackedString(text);
+}
 
 struct BigValue {
   char bytes[8192]{};
@@ -169,6 +175,45 @@ void TestObjectLifetimeAndLargeEntry() {
                "medium entry capacity uses entry storage size");
 }
 
+void TestPackedStringMapZipList() {
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 512>;
+
+  const auto block = ZipList::FromSortedEntries({
+      {Ps("alpha"), Ps("one")},
+      {Ps("bravo"), Ps("two")},
+      {Ps("charlie"), Ps("three")},
+  });
+
+  Require(ZipList::UsesPackedStorageForTest(), "packed map specialization is active");
+  RequireEqual(block.Count(), std::size_t{3}, "packed map count");
+  Require(block.FrontKey() == Ps("alpha"), "packed map FrontKey");
+  Require(block.BackKey() == Ps("charlie"), "packed map BackKey");
+  Require(block.KeyAt(1) == Ps("bravo"), "packed map KeyAt");
+  Require(block.ValueAt(1) == Ps("two"), "packed map ValueAt");
+  Require(*block.FindValue(Ps("charlie"), std::less<PackedString>()) == Ps("three"),
+          "packed map FindValue hit");
+  Require(block.FindValue(Ps("delta"), std::less<PackedString>()) == nullptr,
+          "packed map FindValue miss");
+
+  const auto inserted = block.WithInserted(1, Ps("aardvark"), Ps("zero"));
+  RequireEqual(inserted.Count(), std::size_t{4}, "packed map inserted count");
+  Require(inserted.KeyAt(1) == Ps("aardvark"), "packed map inserted key");
+  Require(block.KeyAt(1) == Ps("bravo"), "packed map old block unchanged");
+
+  const auto updated = inserted.WithUpdated(2, Ps("TWO"));
+  Require(*updated.FindValue(Ps("bravo"), std::less<PackedString>()) == Ps("TWO"),
+          "packed map update value");
+
+  const auto erased = updated.WithErased(1);
+  Require(erased.FindValue(Ps("aardvark"), std::less<PackedString>()) == nullptr,
+          "packed map erase removes key");
+
+  const auto vector = erased.ToVector();
+  Require(vector.size() == erased.Count(), "packed map ToVector size");
+  Require(vector[0].first == Ps("alpha"), "packed map ToVector first key");
+}
+
 }  // namespace
 
 int main() {
@@ -178,6 +223,7 @@ int main() {
     TestCopyWithInsertUpdateErase();
     TestSplitAndMerge();
     TestObjectLifetimeAndLargeEntry();
+    TestPackedStringMapZipList();
     std::cout << "zip_list_test passed\n";
     return 0;
   } catch (const std::exception& e) {
