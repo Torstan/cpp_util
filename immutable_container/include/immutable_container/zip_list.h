@@ -187,6 +187,15 @@ class ZipList {
     return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
   }
 
+  std::vector<ZipList> SplitWithUpdatedBlocks(std::size_t index,
+                                              const Value& value) const {
+    std::vector<ZipList> blocks;
+    auto split = SplitWithUpdated(index, value);
+    blocks.push_back(std::move(split.first));
+    blocks.push_back(std::move(split.second));
+    return blocks;
+  }
+
   ZipList WithErased(std::size_t index) const {
     if (index >= count_) {
       throw std::out_of_range("ZipList erase index out of range");
@@ -221,6 +230,15 @@ class ZipList {
     std::vector<Entry> left_entries(entries.begin(), entries.begin() + split);
     std::vector<Entry> right_entries(entries.begin() + split, entries.end());
     return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
+  }
+
+  std::vector<ZipList> SplitWithInsertedBlocks(std::size_t index, const Key& key,
+                                               const Value& value) const {
+    std::vector<ZipList> blocks;
+    auto split = SplitWithInserted(index, key, value);
+    blocks.push_back(std::move(split.first));
+    blocks.push_back(std::move(split.second));
+    return blocks;
   }
 
   static bool CanMerge(const ZipList& left, const ZipList& right) {
@@ -530,6 +548,20 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     throw std::logic_error("ZipList split update entries exceed packed capacity");
   }
 
+  std::vector<ZipList> SplitWithUpdatedBlocks(std::size_t index,
+                                              const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList split update index out of range");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_);
+    for (std::size_t i = 0; i < count_; ++i) {
+      entries.push_back({KeyAt(i), i == index ? value : ValueAt(i)});
+    }
+    return PackEntriesIntoBlocks(entries);
+  }
+
   ZipList WithErased(std::size_t index) const {
     if (index >= count_) {
       throw std::out_of_range("ZipList erase index out of range");
@@ -570,6 +602,24 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     }
 
     throw std::logic_error("ZipList split entries exceed packed capacity");
+  }
+
+  std::vector<ZipList> SplitWithInsertedBlocks(std::size_t index, const Key& key,
+                                               const Value& value) const {
+    if (index > count_) {
+      throw std::out_of_range("ZipList split insert index out of range");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_ + 1);
+    for (std::size_t i = 0; i < index; ++i) {
+      entries.push_back({KeyAt(i), ValueAt(i)});
+    }
+    entries.push_back({key, value});
+    for (std::size_t i = index; i < count_; ++i) {
+      entries.push_back({KeyAt(i), ValueAt(i)});
+    }
+    return PackEntriesIntoBlocks(entries);
   }
 
   static bool CanMerge(const ZipList& left, const ZipList& right) {
@@ -704,6 +754,25 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       }
     }
     return true;
+  }
+
+  static std::vector<ZipList> PackEntriesIntoBlocks(const std::vector<Entry>& entries) {
+    std::vector<ZipList> blocks;
+    std::size_t begin = 0;
+    while (begin < entries.size()) {
+      std::size_t end = begin + 1;
+      if (!EntriesFit(entries.begin() + begin, entries.begin() + end)) {
+        throw std::logic_error("ZipList single entry exceeds packed capacity");
+      }
+      while (end < entries.size() &&
+             EntriesFit(entries.begin() + begin, entries.begin() + end + 1)) {
+        ++end;
+      }
+      std::vector<Entry> block_entries(entries.begin() + begin, entries.begin() + end);
+      blocks.push_back(FromSortedEntries(block_entries));
+      begin = end;
+    }
+    return blocks;
   }
 
   std::string_view StoreBytes(const PackedString& text, bool use_external_payload) {
