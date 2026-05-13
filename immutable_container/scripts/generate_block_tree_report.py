@@ -19,13 +19,19 @@ EXPECTED_IMPLEMENTATIONS = (
     "map_tree_packed_string",
     "map_block_tree_2048_packed_string",
     "map_block_tree_4096_packed_string",
+    "map_tree_int32",
+    "map_block_tree_2048_int32",
+    "map_block_tree_4096_int32",
     "set_tree_packed_string",
     "set_block_tree_4096_packed_string",
 )
 EXPECTED_PATTERNS = ("sorted", "random")
 EXPECTED_SIZES = (1, 10, 100, 1000, 10000, 100000)
-EXPECTED_KEY_BYTES = (32, 64)
-EXPECTED_MAP_VALUE_BYTES = (64, 128, 256, 1024)
+EXPECTED_STRING_KEY_BYTES = (32, 64)
+EXPECTED_INT32_KEY_BYTES = (4,)
+EXPECTED_KEY_BYTES = EXPECTED_INT32_KEY_BYTES + EXPECTED_STRING_KEY_BYTES
+EXPECTED_STRING_MAP_VALUE_BYTES = (64, 128, 256, 1024)
+EXPECTED_INT32_MAP_VALUE_BYTES = (4,)
 EXPECTED_SET_VALUE_BYTES = (0,)
 PATTERN_ORDER = {pattern: index for index, pattern in enumerate(EXPECTED_PATTERNS)}
 
@@ -87,8 +93,11 @@ IMPLEMENTATION_ORDER = {
     "map_tree_packed_string": 3,
     "map_block_tree_2048_packed_string": 4,
     "map_block_tree_4096_packed_string": 5,
-    "set_tree_packed_string": 6,
-    "set_block_tree_4096_packed_string": 7,
+    "map_tree_int32": 6,
+    "map_block_tree_2048_int32": 7,
+    "map_block_tree_4096_int32": 8,
+    "set_tree_packed_string": 9,
+    "set_block_tree_4096_packed_string": 10,
 }
 
 IMPLEMENTATION_LABELS = {
@@ -98,6 +107,9 @@ IMPLEMENTATION_LABELS = {
     "map_tree_packed_string": "Map Tree Packed",
     "map_block_tree_2048_packed_string": "Map Block 2048 Packed",
     "map_block_tree_4096_packed_string": "Map Block 4096 Packed",
+    "map_tree_int32": "Map Tree int32",
+    "map_block_tree_2048_int32": "Map Block 2048 int32",
+    "map_block_tree_4096_int32": "Map Block 4096 int32",
     "set_tree_packed_string": "Set Tree Packed",
     "set_block_tree_4096_packed_string": "Set Block 4096 Packed",
 }
@@ -109,6 +121,9 @@ IMPLEMENTATION_FAMILIES = {
     "map_tree_packed_string": "map_packed_string",
     "map_block_tree_2048_packed_string": "map_packed_string",
     "map_block_tree_4096_packed_string": "map_packed_string",
+    "map_tree_int32": "map_int32",
+    "map_block_tree_2048_int32": "map_int32",
+    "map_block_tree_4096_int32": "map_int32",
     "set_tree_packed_string": "set_packed_string",
     "set_block_tree_4096_packed_string": "set_packed_string",
 }
@@ -116,6 +131,7 @@ IMPLEMENTATION_FAMILIES = {
 FAMILY_LABELS = {
     "map_std_string": "ImtMap std::string",
     "map_packed_string": "ImtMap PackedString",
+    "map_int32": "ImtMap int32",
     "set_packed_string": "ImtSet PackedString",
 }
 
@@ -129,6 +145,11 @@ COMPARISON_GROUPS = (
         "map_packed_string",
         "map_tree_packed_string",
         ("map_block_tree_2048_packed_string", "map_block_tree_4096_packed_string"),
+    ),
+    (
+        "map_int32",
+        "map_tree_int32",
+        ("map_block_tree_2048_int32", "map_block_tree_4096_int32"),
     ),
     (
         "set_packed_string",
@@ -154,6 +175,17 @@ CHART_METRICS = (
     ("resident_delta", "Resident memory", "bytes"),
 )
 
+UNIFIED_MAP_CHART_METRICS = (
+    ("allocated_delta", "Allocated memory", "bytes"),
+    ("allocated_per_entry", "Allocated / entry", "bytes/entry"),
+    ("build_us", "Build", "us"),
+    ("find_hit_us", "Find hit", "us"),
+    ("find_miss_us", "Find miss", "us"),
+    ("hit_contains_us", "Contains hit", "us"),
+    ("miss_contains_us", "Contains miss", "us"),
+    ("to_vector_us", "ToVector", "us"),
+)
+
 MAP_READ_METRICS = (
     ("find_hit_us", "Find hit", "us"),
     ("find_miss_us", "Find miss", "us"),
@@ -168,9 +200,27 @@ SERIES_COLORS = {
     "map_tree_packed_string": "#7c3aed",
     "map_block_tree_2048_packed_string": "#ea580c",
     "map_block_tree_4096_packed_string": "#0891b2",
+    "map_tree_int32": "#9333ea",
+    "map_block_tree_2048_int32": "#f97316",
+    "map_block_tree_4096_int32": "#0d9488",
     "set_tree_packed_string": "#4f46e5",
     "set_block_tree_4096_packed_string": "#16a34a",
 }
+
+STRING_MAP_IMPLEMENTATIONS = (
+    "map_tree_std_string",
+    "map_block_tree_2048_std_string",
+    "map_block_tree_4096_std_string",
+    "map_tree_packed_string",
+    "map_block_tree_2048_packed_string",
+    "map_block_tree_4096_packed_string",
+)
+
+INT32_MAP_IMPLEMENTATIONS = (
+    "map_tree_int32",
+    "map_block_tree_2048_int32",
+    "map_block_tree_4096_int32",
+)
 
 
 class ReportError(ValueError):
@@ -236,8 +286,10 @@ def _coerce_case(row, source):
         raise ReportError(f"{source}: unknown implementation {coerced['name']!r}")
     if coerced["pattern"] not in EXPECTED_PATTERNS:
         raise ReportError(f"{source}: unknown pattern {coerced['pattern']!r}")
-    if coerced["key_bytes"] not in EXPECTED_KEY_BYTES:
-        raise ReportError(f"{source}: unexpected key_bytes {coerced['key_bytes']}")
+    if coerced["key_bytes"] not in expected_key_bytes_for_name(coerced["name"]):
+        raise ReportError(
+            f"{source}: unexpected key_bytes {coerced['key_bytes']} for {coerced['name']}"
+        )
     if not valid_value_bytes_for_name(coerced["name"], coerced["value_bytes"]):
         raise ReportError(
             f"{source}: unexpected value_bytes {coerced['value_bytes']} for {coerced['name']}"
@@ -290,7 +342,17 @@ def is_block_tree_case(name):
 
 
 def expected_value_bytes_for_name(name):
-    return EXPECTED_SET_VALUE_BYTES if is_set_case(name) else EXPECTED_MAP_VALUE_BYTES
+    if is_set_case(name):
+        return EXPECTED_SET_VALUE_BYTES
+    if family_for_name(name) == "map_int32":
+        return EXPECTED_INT32_MAP_VALUE_BYTES
+    return EXPECTED_STRING_MAP_VALUE_BYTES
+
+
+def expected_key_bytes_for_name(name):
+    if family_for_name(name) == "map_int32":
+        return EXPECTED_INT32_KEY_BYTES
+    return EXPECTED_STRING_KEY_BYTES
 
 
 def valid_value_bytes_for_name(name, value_bytes):
@@ -307,7 +369,7 @@ def expected_case_keys():
         for name in EXPECTED_IMPLEMENTATIONS
         for pattern in EXPECTED_PATTERNS
         for size in EXPECTED_SIZES
-        for key_bytes in EXPECTED_KEY_BYTES
+        for key_bytes in expected_key_bytes_for_name(name)
         for value_bytes in expected_value_bytes_for_name(name)
     }
 
@@ -415,11 +477,13 @@ def fmt_float(value, digits=2):
 
 
 def fmt_metric_value(field, value):
+    if field == "allocated_per_entry":
+        return f"{float(value):.1f} B/entry"
     if field.endswith("_us"):
-        return fmt_us(value)
+        return fmt_us(int(value))
     if field.endswith("_delta"):
-        return fmt_bytes(value)
-    return fmt_int(value)
+        return fmt_bytes(int(value))
+    return fmt_int(int(value))
 
 
 def sort_key(row):
@@ -529,7 +593,7 @@ def summary_rows(cases):
     size = max(EXPECTED_SIZES)
     for family, baseline_name, candidate_names in COMPARISON_GROUPS:
         for pattern in EXPECTED_PATTERNS:
-            for key_bytes in EXPECTED_KEY_BYTES:
+            for key_bytes in expected_key_bytes_for_name(baseline_name):
                 for value_bytes in expected_value_bytes_for_name(baseline_name):
                     baseline = index.get((pattern, key_bytes, value_bytes, size, baseline_name))
                     if baseline is None:
@@ -570,7 +634,7 @@ def map_read_summary_rows(cases):
         if not family.startswith("map_"):
             continue
         for pattern in EXPECTED_PATTERNS:
-            for key_bytes in EXPECTED_KEY_BYTES:
+            for key_bytes in expected_key_bytes_for_name(baseline_name):
                 for value_bytes in expected_value_bytes_for_name(baseline_name):
                     baseline = index.get((pattern, key_bytes, value_bytes, size, baseline_name))
                     if baseline is None:
@@ -723,7 +787,13 @@ def _series_for_group(rows, field, names):
     for row in rows:
         if row["name"] not in by_name:
             continue
-        by_name[row["name"]].append((row["size"], row[field]))
+        if field == "allocated_per_entry":
+            if row["size"] == 0:
+                continue
+            value = row["allocated_delta"] / row["size"]
+        else:
+            value = row[field]
+        by_name[row["name"]].append((row["size"], value))
     for values in by_name.values():
         values.sort()
     return by_name
@@ -784,7 +854,7 @@ def _chart_svg(rows, field, title, unit, names):
         )
         parts.append(
             f'<text x="{left - 8}" y="{y + 4:.1f}" class="axis-label" '
-            f'text-anchor="end">{_html_escape(fmt_metric_value(field, int(value)))}</text>'
+            f'text-anchor="end">{_html_escape(fmt_metric_value(field, value))}</text>'
         )
 
     legend_y = height - 54
@@ -838,6 +908,59 @@ def _chart_group_html(family, pattern, key_bytes, value_bytes, rows, metrics=CHA
         f"<section class=\"chart-group\"><h3>{_html_escape(heading)}</h3>"
         f"<div class=\"chart-grid\">{''.join(charts)}</div></section>"
     )
+
+
+def _unified_map_group_html(heading, rows, names):
+    charts = []
+    for field, label, unit in UNIFIED_MAP_CHART_METRICS:
+        charts.append(
+            '<div class="chart-card">'
+            + _chart_svg(rows, field, label, unit, names)
+            + "</div>"
+        )
+    return (
+        f"<section class=\"chart-group\"><h3>{_html_escape(heading)}</h3>"
+        f"<div class=\"chart-grid\">{''.join(charts)}</div></section>"
+    )
+
+
+def unified_map_charts_html(cases):
+    sections = []
+    string_groups = {}
+    int32_groups = {}
+    for row in sorted(cases, key=sort_key):
+        family = family_for_name(row["name"])
+        if family in ("map_std_string", "map_packed_string"):
+            key = (row["pattern"], row["key_bytes"], row["value_bytes"])
+            string_groups.setdefault(key, []).append(row)
+        elif family == "map_int32":
+            int32_groups.setdefault(row["pattern"], []).append(row)
+
+    for (pattern, key_bytes, value_bytes), rows in sorted(
+        string_groups.items(),
+        key=lambda item: (
+            PATTERN_ORDER[item[0][0]],
+            item[0][1],
+            item[0][2],
+        ),
+    ):
+        present = {row["name"] for row in rows}
+        names = tuple(name for name in STRING_MAP_IMPLEMENTATIONS if name in present)
+        heading = (
+            f"String Map: {pattern} inserts, {fmt_int(key_bytes)}-byte keys, "
+            f"{fmt_int(value_bytes)}-byte values"
+        )
+        sections.append(_unified_map_group_html(heading, rows, names))
+
+    for pattern, rows in sorted(
+        int32_groups.items(), key=lambda item: PATTERN_ORDER[item[0]]
+    ):
+        present = {row["name"] for row in rows}
+        names = tuple(name for name in INT32_MAP_IMPLEMENTATIONS if name in present)
+        heading = f"Map int32: {pattern} inserts, int32 keys, int32 values"
+        sections.append(_unified_map_group_html(heading, rows, names))
+
+    return "\n".join(sections)
 
 
 def charts_html(cases):
@@ -1028,7 +1151,7 @@ li {{ margin: 6px 0; }}
 <main>
 <h1>{_html_escape(title)}</h1>
 <p>Self-contained report generated from line-oriented benchmark rows.</p>
-<p class="note">Memory charts use jemalloc deltas from one fresh benchmark process per case. Charts are grouped by API and string representation so unrelated map/set cases do not create empty series.</p>
+<p class="note">Memory charts use jemalloc deltas from one fresh benchmark process per case. Unified map charts put comparable Tree, Block 2048, and Block 4096 implementations on the same axes for direct comparison.</p>
 
 <h2>Metadata</h2>
 <div class="panel">
@@ -1054,6 +1177,9 @@ li {{ margin: 6px 0; }}
 <div class="panel">
 {_table(["Family", "Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Find hit", "Find miss", "Find value size", "Find value scan"], map_read_summary_rows(cases))}
 </div>
+
+<h2>Unified Map Charts</h2>
+{unified_map_charts_html(cases)}
 
 <h2>Charts</h2>
 {charts_html(cases)}
@@ -1099,7 +1225,7 @@ def _run_benchmark(command):
     output.append(env.stdout)
     for name in EXPECTED_IMPLEMENTATIONS:
         for pattern in EXPECTED_PATTERNS:
-            for key_bytes in EXPECTED_KEY_BYTES:
+            for key_bytes in expected_key_bytes_for_name(name):
                 for value_bytes in expected_value_bytes_for_name(name):
                     for size in EXPECTED_SIZES:
                         completed = subprocess.run(
@@ -1170,6 +1296,25 @@ def self_test():
             "to_vector_us=350,allocated_delta=2048,active_delta=4096,resident_delta=8192,"
             "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
             "min_block_count=1\n",
+            "case,name=map_tree_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
+            "height=10,build_us=123,hit_contains_us=56,miss_contains_us=78,"
+            "to_vector_us=90,find_hit_us=11,find_miss_us=12,"
+            "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
+            "allocated_delta=4000,active_delta=8192,resident_delta=16384\n",
+            "case,name=map_block_tree_2048_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
+            "height=5,build_us=120,hit_contains_us=50,miss_contains_us=70,"
+            "to_vector_us=88,find_hit_us=10,find_miss_us=12,"
+            "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
+            "allocated_delta=3000,active_delta=8192,resident_delta=16384,"
+            "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
+            "min_block_count=1\n",
+            "case,name=map_block_tree_4096_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
+            "height=5,build_us=118,hit_contains_us=49,miss_contains_us=69,"
+            "to_vector_us=86,find_hit_us=9,find_miss_us=11,"
+            "find_hit_value_size_us=12,find_hit_value_scan_us=13,"
+            "allocated_delta=2800,active_delta=8192,resident_delta=16384,"
+            "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
+            "min_block_count=1\n",
         ],
         "<self-test>",
         require_complete_matrix=False,
@@ -1216,6 +1361,9 @@ def self_test():
     assert ("set_tree_packed_string", "sorted", 1, 32, 64) not in keys
     assert ("map_tree_std_string", "sorted", 1, 32, 64) in keys
     assert ("map_tree_std_string", "sorted", 1, 32, 0) not in keys
+    assert ("map_tree_int32", "sorted", 1, 4, 4) in keys
+    assert ("map_tree_int32", "sorted", 1, 32, 4) not in keys
+    assert ("map_tree_int32", "sorted", 1, 4, 64) not in keys
     assert fmt_int(1234567) == "1,234,567"
     assert fmt_us(1234) == "1.23 ms"
     assert fmt_bytes(2048) == "2.00 KiB"
@@ -1236,6 +1384,9 @@ def self_test():
     assert "same as Map Tree std" in html_text
     assert "same than Map Tree std" not in html_text
     assert "Charts" in html_text
+    assert "Unified Map Charts" in html_text
+    assert "Map int32: random inserts" in html_text
+    assert "Allocated / entry" in html_text
     assert "Map Find Performance" in html_text
     assert "Find hit" in html_text
     assert "Find value scan" in html_text

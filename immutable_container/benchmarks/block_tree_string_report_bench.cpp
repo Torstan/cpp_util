@@ -155,6 +155,26 @@ Map BuildMap(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
   return map;
 }
 
+template <typename Map>
+Map BuildInt32Map(const std::vector<std::size_t>& indexes) {
+  Map map;
+  for (std::size_t index : indexes) {
+    const auto value = static_cast<std::int32_t>(index);
+    std::optional<Map> next = map.Insert(value, value);
+    if (!next.has_value()) {
+      std::cerr << "duplicate int32 insert while building index " << index << "\n";
+      std::exit(2);
+    }
+    map = *next;
+  }
+  if (map.Size() != indexes.size()) {
+    std::cerr << "map size mismatch: expected " << indexes.size() << " got " << map.Size()
+              << "\n";
+    std::exit(2);
+  }
+  return map;
+}
+
 template <typename Set, typename Text>
 Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
   Set set;
@@ -177,8 +197,8 @@ Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
 [[maybe_unused]] void PrintEnvRow() {
   std::cout << "env,benchmark=immutable_tree_vs_block_tree_string,allocator=jemalloc"
             << ",api=ImtMap|ImtSet,key_types=std::string|PackedString"
-            << ",value_types=std::string|PackedString,key_bytes=32|64"
-            << ",value_bytes=64|128|256|1024,set_value_bytes=0"
+            << "|int32,value_types=std::string|PackedString|int32,key_bytes=32|64|4"
+            << ",value_bytes=64|128|256|1024|4,set_value_bytes=0"
             << ",key_pattern=key_<zero-padded-index>,value_pattern=value_<zero-padded-index>_<letters>"
             << ",sizes=1|10|100|1000|10000|100000"
             << ",patterns=sorted|random\n";
@@ -324,6 +344,137 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
         const Text* value = map.Find(key);
         if (value) {
           total += ScanTextBytes(*value);
+        }
+      }
+    }
+    g_size_sink += total;
+  });
+
+  const long long to_vector_us = TimeMicros([&] {
+    const auto values = map.ToVector();
+    g_size_sink += values.size();
+  });
+
+  std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
+            << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
+            << ",repetitions=" << repetitions << ",height=" << map.Height()
+            << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
+            << ",miss_contains_us=" << miss_contains_us << ",find_hit_us=" << find_hit_us
+            << ",find_miss_us=" << find_miss_us
+            << ",find_hit_value_size_us=" << find_hit_value_size_us
+            << ",find_hit_value_scan_us=" << find_hit_value_scan_us
+            << ",to_vector_us=" << to_vector_us;
+  PrintMemoryFields(start_stats, after_build_stats);
+  PrintDebugStats(map, std::cout);
+  std::cout << "\n";
+}
+
+template <typename Map>
+void RunInt32Case(const std::string& name, const std::string& pattern, std::size_t size,
+                  std::size_t key_bytes, std::size_t value_bytes) {
+  if (key_bytes != sizeof(std::int32_t) || value_bytes != sizeof(std::int32_t)) {
+    std::cerr << "int32 benchmark requires key_bytes=4,value_bytes=4 for name: " << name
+              << "\n";
+    std::exit(2);
+  }
+
+  const std::vector<std::size_t> indexes = MakeIndexes(size, pattern);
+  std::vector<std::int32_t> hit_keys;
+  std::vector<std::int32_t> miss_keys;
+  hit_keys.reserve(size);
+  miss_keys.reserve(size);
+  for (std::size_t i = 0; i < size; ++i) {
+    hit_keys.push_back(static_cast<std::int32_t>(i));
+    miss_keys.push_back(static_cast<std::int32_t>(i + size + 1));
+  }
+
+  FlushJemallocThreadCache();
+  RefreshJemallocEpoch();
+  const JemallocStats start_stats = ReadJemallocStats();
+  Map map;
+  const long long build_us = TimeMicros([&] { map = BuildInt32Map<Map>(indexes); });
+  FlushJemallocThreadCache();
+  RefreshJemallocEpoch();
+  const JemallocStats after_build_stats = ReadJemallocStats();
+  if (size != 0) {
+    std::optional<Map> duplicate = map.Insert(0, 0);
+    if (duplicate.has_value()) {
+      std::cerr << "duplicate int32 insert accepted for name=" << name
+                << ",pattern=" << pattern << ",size=" << size
+                << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes << "\n";
+      std::exit(2);
+    }
+  }
+
+  const std::size_t repetitions = ReadRepetitions(size);
+  const long long hit_contains_us = TimeMicros([&] {
+    std::size_t hits = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : hit_keys) {
+        if (map.Contains(key)) {
+          ++hits;
+        }
+      }
+    }
+    g_size_sink += hits;
+  });
+
+  const long long miss_contains_us = TimeMicros([&] {
+    std::size_t misses = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : miss_keys) {
+        if (!map.Contains(key)) {
+          ++misses;
+        }
+      }
+    }
+    g_size_sink += misses;
+  });
+
+  const long long find_hit_us = TimeMicros([&] {
+    std::size_t hits = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : hit_keys) {
+        if (map.Find(key) != nullptr) {
+          ++hits;
+        }
+      }
+    }
+    g_size_sink += hits;
+  });
+
+  const long long find_miss_us = TimeMicros([&] {
+    std::size_t misses = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : miss_keys) {
+        if (map.Find(key) == nullptr) {
+          ++misses;
+        }
+      }
+    }
+    g_size_sink += misses;
+  });
+
+  const long long find_hit_value_size_us = TimeMicros([&] {
+    std::size_t total_size = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : hit_keys) {
+        const std::int32_t* value = map.Find(key);
+        if (value) {
+          total_size += sizeof(*value);
+        }
+      }
+    }
+    g_size_sink += total_size;
+  });
+
+  const long long find_hit_value_scan_us = TimeMicros([&] {
+    std::size_t total = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (std::int32_t key : hit_keys) {
+        const std::int32_t* value = map.Find(key);
+        if (value) {
+          total += static_cast<std::size_t>(*value);
         }
       }
     }
@@ -530,6 +681,33 @@ void RunNamedCase(const std::string& name, const std::string& pattern, std::size
     using Map = immutable_container::ImtMap<Text, Text, std::less<Text>,
                                            immutable_container::NonAtomicRefCount, BlockTree>;
     RunCase<Map, Text>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_tree_int32") {
+    using Map = immutable_container::ImtMap<std::int32_t, std::int32_t>;
+    RunInt32Case<Map>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_block_tree_2048_int32") {
+    using BlockTree =
+        immutable_container::ImmutableBlockTree<std::int32_t, std::int32_t,
+                                               std::less<std::int32_t>,
+                                               immutable_container::NonAtomicRefCount, 2048>;
+    using Map = immutable_container::ImtMap<std::int32_t, std::int32_t,
+                                           std::less<std::int32_t>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunInt32Case<Map>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_block_tree_4096_int32") {
+    using BlockTree =
+        immutable_container::ImmutableBlockTree<std::int32_t, std::int32_t,
+                                               std::less<std::int32_t>,
+                                               immutable_container::NonAtomicRefCount, 4096>;
+    using Map = immutable_container::ImtMap<std::int32_t, std::int32_t,
+                                           std::less<std::int32_t>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunInt32Case<Map>(name, pattern, size, key_bytes, value_bytes);
     return;
   }
   if (name == "set_tree_packed_string") {
