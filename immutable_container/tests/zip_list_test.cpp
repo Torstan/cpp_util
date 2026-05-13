@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "immutable_container/packed_string.h"
+#include "immutable_container/unit_value.h"
 #include "immutable_container/zip_list.h"
 
 namespace {
@@ -305,6 +306,103 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   Require(empty.ValueAt(0) == Ps(""), "packed map stores empty value");
 }
 
+void TestPackedStringSetZipList() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+  using ZipList = immutable_container::ZipList<PackedString, UnitValue, 256>;
+
+  const auto block = ZipList::FromSortedEntries({
+      {Ps("alpha"), UnitValue{}},
+      {Ps("bravo"), UnitValue{}},
+      {Ps("charlie"), UnitValue{}},
+  });
+
+  Require(ZipList::UsesPackedStorageForTest(), "packed set specialization is active");
+  RequireEqual(block.Count(), std::size_t{3}, "packed set count");
+  Require(block.FrontKey() == Ps("alpha"), "packed set FrontKey");
+  Require(block.BackKey() == Ps("charlie"), "packed set BackKey");
+  Require(block.FindValue(Ps("bravo"), std::less<PackedString>()) != nullptr,
+          "packed set FindValue hit");
+  Require(block.FindValue(Ps("delta"), std::less<PackedString>()) == nullptr,
+          "packed set FindValue miss");
+
+  const auto inserted = block.WithInserted(1, Ps("aardvark"), UnitValue{});
+  RequireEqual(inserted.Count(), std::size_t{4}, "packed set inserted count");
+  Require(inserted.KeyAt(1) == Ps("aardvark"), "packed set inserted key");
+
+  const auto erased = inserted.WithErased(1);
+  Require(erased.FindValue(Ps("aardvark"), std::less<PackedString>()) == nullptr,
+          "packed set erase removes key");
+
+  const auto vector = erased.ToVector();
+  RequireEqual(vector.size(), erased.Count(), "packed set ToVector size");
+}
+
+void TestPackedStringSetPayloadBudgetAndLifetime() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+  using ZipList = immutable_container::ZipList<PackedString, UnitValue, 256>;
+  using MapZipList = immutable_container::ZipList<PackedString, PackedString, 256>;
+
+  Require(ZipList::DefaultCapacity() > MapZipList::DefaultCapacity(),
+          "packed set capacity is higher than packed map capacity");
+
+  const auto left = ZipList::FromSortedEntries({
+      {RepeatedPacked('a', 80), UnitValue{}},
+  });
+  const auto right = ZipList::FromSortedEntries({
+      {RepeatedPacked('b', 80), UnitValue{}},
+  });
+
+  Require(!left.CanInsert(RepeatedPacked('c', 80), UnitValue{}),
+          "packed set refuses normal key when payload budget is exhausted");
+  Require(!ZipList::CanMerge(left, right),
+          "packed set CanMerge rejects over-budget combined payload");
+
+  const auto oversized = ZipList::FromSortedEntries({
+      {RepeatedPacked('x', 300), UnitValue{}},
+  });
+  Require(oversized.FindValue(RepeatedPacked('x', 300), std::less<PackedString>()) !=
+              nullptr,
+          "packed set stores single oversized key");
+  Require(!oversized.CanInsert(Ps("small"), UnitValue{}),
+          "packed set refuses to add normal key beside oversized key");
+  Require(!left.CanInsert(RepeatedPacked('y', 300), UnitValue{}),
+          "packed set refuses oversized key in non-empty block");
+  Require(!ZipList::CanMerge(oversized, left),
+          "packed set refuses to merge oversized key with other entries");
+  RequireThrowsLogic([&] { left.WithInserted(1, RepeatedPacked('z', 300), UnitValue{}); },
+                     "packed set direct insert rejects oversized key in non-empty block");
+
+  const auto split_base = ZipList::FromSortedEntries({
+      {Ps("a"), UnitValue{}},
+      {Ps("c"), UnitValue{}},
+  });
+  const auto insert_blocks =
+      split_base.SplitWithInsertedBlocks(1, RepeatedPacked('b', 300), UnitValue{});
+  RequireEqual(insert_blocks.size(), std::size_t{3},
+               "packed set split isolates oversized insert");
+  Require(insert_blocks[0].FrontKey() == Ps("a"), "packed set first split block key");
+  Require(insert_blocks[1].FrontKey() == RepeatedPacked('b', 300),
+          "packed set oversized split block key");
+  Require(insert_blocks[2].FrontKey() == Ps("c"), "packed set final split block key");
+
+  ZipList copied = left;
+  Require(copied.FrontKey() == RepeatedPacked('a', 80),
+          "packed set copy keeps borrowed key storage valid");
+
+  ZipList moved = std::move(copied);
+  Require(moved.FrontKey() == RepeatedPacked('a', 80),
+          "packed set move keeps borrowed key storage valid");
+
+  const auto empty = ZipList::FromSortedEntries({
+      {Ps(""), UnitValue{}},
+  });
+  Require(empty.FrontKey() == Ps(""), "packed set stores empty key");
+  Require(empty.FindValue(Ps(""), std::less<PackedString>()) != nullptr,
+          "packed set finds empty key");
+}
+
 }  // namespace
 
 int main() {
@@ -316,6 +414,8 @@ int main() {
     TestObjectLifetimeAndLargeEntry();
     TestPackedStringMapZipList();
     TestPackedStringMapPayloadBudgetAndLifetime();
+    TestPackedStringSetZipList();
+    TestPackedStringSetPayloadBudgetAndLifetime();
     std::cout << "zip_list_test passed\n";
     return 0;
   } catch (const std::exception& e) {
