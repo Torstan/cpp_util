@@ -63,6 +63,11 @@ class ImtSet {
     return result;
   }
 
+  template <typename T = Tree>
+  auto DebugStatsForTest() const -> decltype(std::declval<const T&>().DebugStatsForTest()) {
+    return tree_.DebugStatsForTest();
+  }
+
  private:
   explicit ImtSet(Tree tree) : tree_(std::move(tree)) {}
 

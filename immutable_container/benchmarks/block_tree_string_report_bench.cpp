@@ -10,6 +10,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -19,8 +20,11 @@
 #endif
 
 #include "immutable_container/immutable_block_tree.h"
-#include "immutable_container/immutable_tree.h"
+#include "immutable_container/imt_map.h"
+#include "immutable_container/imt_set.h"
+#include "immutable_container/packed_string.h"
 #include "immutable_container/ref_count_policy.h"
+#include "immutable_container/unit_value.h"
 
 namespace {
 
@@ -69,6 +73,16 @@ std::string MakeStringValue(std::size_t index, std::size_t value_bytes) {
   return value;
 }
 
+template <typename Text>
+Text MakeText(std::string text) {
+  return Text(std::move(text));
+}
+
+template <>
+immutable_container::PackedString MakeText<immutable_container::PackedString>(std::string text) {
+  return immutable_container::PackedString(std::string_view(text.data(), text.size()));
+}
+
 std::vector<std::size_t> MakeIndexes(std::size_t size, const std::string& pattern) {
   std::vector<std::size_t> indexes;
   indexes.reserve(size);
@@ -102,31 +116,53 @@ void RefreshJemallocEpoch();
 JemallocStats ReadJemallocStats();
 void FlushJemallocThreadCache();
 
-template <typename Tree>
-Tree BuildTree(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
-               std::size_t value_bytes) {
-  Tree tree;
+template <typename Map, typename Text>
+Map BuildMap(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
+             std::size_t value_bytes) {
+  Map map;
   for (std::size_t index : indexes) {
-    std::optional<Tree> next =
-        tree.Insert(MakeStringKey(index, key_bytes), MakeStringValue(index, value_bytes));
+    std::optional<Map> next = map.Insert(MakeText<Text>(MakeStringKey(index, key_bytes)),
+                                         MakeText<Text>(MakeStringValue(index, value_bytes)));
     if (!next.has_value()) {
       std::cerr << "duplicate insert while building index " << index << "\n";
       std::exit(2);
     }
-    tree = *next;
+    map = *next;
   }
-  if (tree.Size() != indexes.size()) {
-    std::cerr << "tree size mismatch: expected " << indexes.size() << " got " << tree.Size()
+  if (map.Size() != indexes.size()) {
+    std::cerr << "map size mismatch: expected " << indexes.size() << " got " << map.Size()
               << "\n";
     std::exit(2);
   }
-  return tree;
+  return map;
+}
+
+template <typename Set, typename Text>
+Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
+  Set set;
+  for (std::size_t index : indexes) {
+    std::optional<Set> next = set.Insert(MakeText<Text>(MakeStringKey(index, key_bytes)));
+    if (!next.has_value()) {
+      std::cerr << "duplicate insert while building set index " << index << "\n";
+      std::exit(2);
+    }
+    set = *next;
+  }
+  if (set.Size() != indexes.size()) {
+    std::cerr << "set size mismatch: expected " << indexes.size() << " got " << set.Size()
+              << "\n";
+    std::exit(2);
+  }
+  return set;
 }
 
 [[maybe_unused]] void PrintEnvRow() {
   std::cout << "env,benchmark=immutable_tree_vs_block_tree_string,allocator=jemalloc"
-            << ",key_type=std::string,value_type=std::string,key_bytes=32|64"
-            << ",value_bytes=64|128|256|1024,sizes=1|10|100|1000|10000|100000"
+            << ",api=ImtMap|ImtSet,key_types=std::string|PackedString"
+            << ",value_types=std::string|PackedString,key_bytes=32|64"
+            << ",value_bytes=64|128|256|1024,set_value_bytes=0"
+            << ",key_pattern=key_<zero-padded-index>,value_pattern=value_<zero-padded-index>_<letters>"
+            << ",sizes=1|10|100|1000|10000|100000"
             << ",patterns=sorted|random\n";
 }
 
@@ -167,32 +203,32 @@ void PrintMemoryFields(const JemallocStats& start, const JemallocStats& after_bu
                    static_cast<std::int64_t>(start.resident);
 }
 
-template <typename Tree>
+template <typename Map, typename Text>
 void RunCase(const std::string& name, const std::string& pattern, std::size_t size,
              std::size_t key_bytes, std::size_t value_bytes) {
   const std::vector<std::size_t> indexes = MakeIndexes(size, pattern);
-  std::vector<std::string> hit_keys;
-  std::vector<std::string> miss_keys;
+  std::vector<Text> hit_keys;
+  std::vector<Text> miss_keys;
   hit_keys.reserve(size);
   miss_keys.reserve(size);
   for (std::size_t i = 0; i < size; ++i) {
-    hit_keys.push_back(MakeStringKey(i, key_bytes));
-    miss_keys.push_back(MakeStringKey(i + size + 1, key_bytes));
+    hit_keys.push_back(MakeText<Text>(MakeStringKey(i, key_bytes)));
+    miss_keys.push_back(MakeText<Text>(MakeStringKey(i + size + 1, key_bytes)));
   }
 
   FlushJemallocThreadCache();
   RefreshJemallocEpoch();
   const JemallocStats start_stats = ReadJemallocStats();
-  Tree tree;
+  Map map;
   const long long build_us = TimeMicros([&] {
-    tree = BuildTree<Tree>(indexes, key_bytes, value_bytes);
+    map = BuildMap<Map, Text>(indexes, key_bytes, value_bytes);
   });
   FlushJemallocThreadCache();
   RefreshJemallocEpoch();
   const JemallocStats after_build_stats = ReadJemallocStats();
   if (size != 0) {
-    std::optional<Tree> duplicate =
-        tree.Insert(MakeStringKey(0, key_bytes), MakeStringValue(0, value_bytes));
+    std::optional<Map> duplicate = map.Insert(MakeText<Text>(MakeStringKey(0, key_bytes)),
+                                              MakeText<Text>(MakeStringValue(0, value_bytes)));
     if (duplicate.has_value()) {
       std::cerr << "duplicate string insert accepted for name=" << name
                 << ",pattern=" << pattern << ",size=" << size
@@ -205,8 +241,8 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   const long long hit_contains_us = TimeMicros([&] {
     std::size_t hits = 0;
     for (std::size_t rep = 0; rep < repetitions; ++rep) {
-      for (const std::string& key : hit_keys) {
-        if (tree.Contains(key)) {
+      for (const Text& key : hit_keys) {
+        if (map.Contains(key)) {
           ++hits;
         }
       }
@@ -217,8 +253,8 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   const long long miss_contains_us = TimeMicros([&] {
     std::size_t misses = 0;
     for (std::size_t rep = 0; rep < repetitions; ++rep) {
-      for (const std::string& key : miss_keys) {
-        if (!tree.Contains(key)) {
+      for (const Text& key : miss_keys) {
+        if (!map.Contains(key)) {
           ++misses;
         }
       }
@@ -227,17 +263,89 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   });
 
   const long long to_vector_us = TimeMicros([&] {
-    const auto values = tree.ToVector();
+    const auto values = map.ToVector();
     g_size_sink += values.size();
   });
 
   std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
             << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
-            << ",repetitions=" << repetitions << ",height=" << tree.Height()
+            << ",repetitions=" << repetitions << ",height=" << map.Height()
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
             << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us;
   PrintMemoryFields(start_stats, after_build_stats);
-  PrintDebugStats(tree, std::cout);
+  PrintDebugStats(map, std::cout);
+  std::cout << "\n";
+}
+
+template <typename Set, typename Text>
+void RunSetCase(const std::string& name, const std::string& pattern, std::size_t size,
+                std::size_t key_bytes) {
+  const std::vector<std::size_t> indexes = MakeIndexes(size, pattern);
+  std::vector<Text> hit_keys;
+  std::vector<Text> miss_keys;
+  hit_keys.reserve(size);
+  miss_keys.reserve(size);
+  for (std::size_t i = 0; i < size; ++i) {
+    hit_keys.push_back(MakeText<Text>(MakeStringKey(i, key_bytes)));
+    miss_keys.push_back(MakeText<Text>(MakeStringKey(i + size + 1, key_bytes)));
+  }
+
+  FlushJemallocThreadCache();
+  RefreshJemallocEpoch();
+  const JemallocStats start_stats = ReadJemallocStats();
+  Set set;
+  const long long build_us = TimeMicros([&] {
+    set = BuildSet<Set, Text>(indexes, key_bytes);
+  });
+  FlushJemallocThreadCache();
+  RefreshJemallocEpoch();
+  const JemallocStats after_build_stats = ReadJemallocStats();
+  if (size != 0) {
+    std::optional<Set> duplicate = set.Insert(MakeText<Text>(MakeStringKey(0, key_bytes)));
+    if (duplicate.has_value()) {
+      std::cerr << "duplicate set insert accepted for name=" << name << ",pattern=" << pattern
+                << ",size=" << size << ",key_bytes=" << key_bytes << ",value_bytes=0\n";
+      std::exit(2);
+    }
+  }
+
+  const std::size_t repetitions = ReadRepetitions(size);
+  const long long hit_contains_us = TimeMicros([&] {
+    std::size_t hits = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : hit_keys) {
+        if (set.Contains(key)) {
+          ++hits;
+        }
+      }
+    }
+    g_size_sink += hits;
+  });
+
+  const long long miss_contains_us = TimeMicros([&] {
+    std::size_t misses = 0;
+    for (std::size_t rep = 0; rep < repetitions; ++rep) {
+      for (const Text& key : miss_keys) {
+        if (!set.Contains(key)) {
+          ++misses;
+        }
+      }
+    }
+    g_size_sink += misses;
+  });
+
+  const long long to_vector_us = TimeMicros([&] {
+    const auto values = set.ToVector();
+    g_size_sink += values.size();
+  });
+
+  std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
+            << ",key_bytes=" << key_bytes << ",value_bytes=0"
+            << ",repetitions=" << repetitions << ",height=" << set.Height()
+            << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
+            << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us;
+  PrintMemoryFields(start_stats, after_build_stats);
+  PrintDebugStats(set, std::cout);
   std::cout << "\n";
 }
 
@@ -303,23 +411,77 @@ void PrintUsage(const char* program) {
 
 void RunNamedCase(const std::string& name, const std::string& pattern, std::size_t size,
                   std::size_t key_bytes, std::size_t value_bytes) {
-  if (name == "immutable_tree") {
-    using StringTree = immutable_container::ImmutableTree<std::string, std::string>;
-    RunCase<StringTree>(name, pattern, size, key_bytes, value_bytes);
+  if (name == "map_tree_std_string") {
+    using Map = immutable_container::ImtMap<std::string, std::string>;
+    RunCase<Map, std::string>(name, pattern, size, key_bytes, value_bytes);
     return;
   }
-  if (name == "block_tree_2048") {
-    using BlockTree2048 =
+  if (name == "map_block_tree_2048_std_string") {
+    using BlockTree =
         immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
                                                immutable_container::NonAtomicRefCount, 2048>;
-    RunCase<BlockTree2048>(name, pattern, size, key_bytes, value_bytes);
+    using Map = immutable_container::ImtMap<std::string, std::string, std::less<std::string>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunCase<Map, std::string>(name, pattern, size, key_bytes, value_bytes);
     return;
   }
-  if (name == "block_tree_4096") {
-    using BlockTree4096 =
+  if (name == "map_block_tree_4096_std_string") {
+    using BlockTree =
         immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
                                                immutable_container::NonAtomicRefCount, 4096>;
-    RunCase<BlockTree4096>(name, pattern, size, key_bytes, value_bytes);
+    using Map = immutable_container::ImtMap<std::string, std::string, std::less<std::string>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunCase<Map, std::string>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_tree_packed_string") {
+    using Text = immutable_container::PackedString;
+    using Map = immutable_container::ImtMap<Text, Text>;
+    RunCase<Map, Text>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_block_tree_2048_packed_string") {
+    using Text = immutable_container::PackedString;
+    using BlockTree =
+        immutable_container::ImmutableBlockTree<Text, Text, std::less<Text>,
+                                               immutable_container::NonAtomicRefCount, 2048>;
+    using Map = immutable_container::ImtMap<Text, Text, std::less<Text>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunCase<Map, Text>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "map_block_tree_4096_packed_string") {
+    using Text = immutable_container::PackedString;
+    using BlockTree =
+        immutable_container::ImmutableBlockTree<Text, Text, std::less<Text>,
+                                               immutable_container::NonAtomicRefCount, 4096>;
+    using Map = immutable_container::ImtMap<Text, Text, std::less<Text>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunCase<Map, Text>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "set_tree_packed_string") {
+    if (value_bytes != 0) {
+      std::cerr << "set benchmark requires value_bytes=0 for name: " << name << "\n";
+      std::exit(2);
+    }
+    using Text = immutable_container::PackedString;
+    using Set = immutable_container::ImtSet<Text>;
+    RunSetCase<Set, Text>(name, pattern, size, key_bytes);
+    return;
+  }
+  if (name == "set_block_tree_4096_packed_string") {
+    if (value_bytes != 0) {
+      std::cerr << "set benchmark requires value_bytes=0 for name: " << name << "\n";
+      std::exit(2);
+    }
+    using Text = immutable_container::PackedString;
+    using BlockTree = immutable_container::ImmutableBlockTree<
+        Text, immutable_container::UnitValue, std::less<Text>,
+        immutable_container::NonAtomicRefCount, 4096>;
+    using Set = immutable_container::ImtSet<Text, std::less<Text>,
+                                           immutable_container::NonAtomicRefCount, BlockTree>;
+    RunSetCase<Set, Text>(name, pattern, size, key_bytes);
     return;
   }
   std::cerr << "unknown implementation name: " << name << "\n";

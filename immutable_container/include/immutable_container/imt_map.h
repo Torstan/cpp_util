@@ -60,6 +60,11 @@ class ImtMap {
 
   std::vector<std::pair<Key, Value>> ToVector() const { return tree_.ToVector(); }
 
+  template <typename T = Tree>
+  auto DebugStatsForTest() const -> decltype(std::declval<const T&>().DebugStatsForTest()) {
+    return tree_.DebugStatsForTest();
+  }
+
  private:
   explicit ImtMap(Tree tree) : tree_(std::move(tree)) {}
 
