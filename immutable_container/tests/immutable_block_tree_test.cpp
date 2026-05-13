@@ -382,10 +382,14 @@ void TestPackedStringBlockTreeMapBehavior() {
   const auto two = one->Insert(Pbs("a"), Pbs("one"));
   Require(two.has_value(), "packed map tree insert a");
   const auto three = two->Set(Pbs("c"), Pbs("three"));
-  const auto changed = three.Set(Pbs("b"), Pbs("TWO"));
+  const auto updated = three.Update(Pbs("b"), Pbs("TWO"));
+  Require(updated.has_value(), "packed map tree update b");
+  const auto changed = updated->Set(Pbs("c"), Pbs("THREE"));
 
   Require(*three.Find(Pbs("b")) == Pbs("two"), "packed map old value remains");
   Require(*changed.Find(Pbs("b")) == Pbs("TWO"), "packed map updated value");
+  Require(*three.Find(Pbs("c")) == Pbs("three"), "packed map set leaves old c");
+  Require(*changed.Find(Pbs("c")) == Pbs("THREE"), "packed map set updates c");
   Require(changed.Contains(Pbs("a")), "packed map contains a");
   Require(changed.ToVector()[0].first == Pbs("a"), "packed map ToVector sorted");
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
