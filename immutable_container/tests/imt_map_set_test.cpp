@@ -49,7 +49,14 @@ void RequirePackedMapBehavior(const std::string& label) {
   Require(*changed.Find(Pms("k2")) == Pms("V2"), label + " new version updates k2");
   Require(changed.Contains(Pms("k1")), label + " contains k1");
   Require(!changed.Contains(Pms("missing")), label + " misses absent key");
-  Require(changed.ToVector()[0].first == Pms("k1"), label + " ToVector sorted");
+  Require(changed.ToVector() ==
+              std::vector<std::pair<immutable_container::PackedString,
+                                    immutable_container::PackedString>>({
+                  {Pms("k1"), Pms("v1")},
+                  {Pms("k2"), Pms("V2")},
+                  {Pms("k3"), Pms("v3")},
+              }),
+          label + " ToVector sorted");
 
   const auto missing_update = changed.Update(Pms("missing"), Pms("value"));
   Require(!missing_update.has_value(), label + " rejects missing update");
@@ -70,11 +77,18 @@ void RequirePackedSetBehavior(const std::string& label) {
   Require(added.Contains(Pms("k1")), label + " contains k1");
   Require(added.Contains(Pms("k2")), label + " contains k2");
   Require(added.Contains(Pms("k3")), label + " contains k3");
+  RequireEqual(added.Size(), std::size_t{3}, label + " duplicate Add is idempotent");
   const auto erased = added.Erase(Pms("k2"));
   Require(erased.has_value(), label + " erases k2");
   Require(!erased->Contains(Pms("k2")), label + " erased version misses k2");
   Require(added.Contains(Pms("k2")), label + " old version keeps k2");
-  Require(added.ToVector()[0] == Pms("k1"), label + " ToVector sorted");
+  Require(added.ToVector() ==
+              std::vector<immutable_container::PackedString>({
+                  Pms("k1"),
+                  Pms("k2"),
+                  Pms("k3"),
+              }),
+          label + " ToVector sorted");
 }
 
 template <typename Set>
