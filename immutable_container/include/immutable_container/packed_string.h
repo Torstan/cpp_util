@@ -1,8 +1,11 @@
 #ifndef IMMUTABLE_CONTAINER_PACKED_STRING_H_
 #define IMMUTABLE_CONTAINER_PACKED_STRING_H_
 
+#include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,7 +17,7 @@ class ZipList;
 
 class PackedString {
  public:
-  PackedString() noexcept = default;
+  PackedString() noexcept { SetShortEmpty(); }
 
   PackedString(const char* text)
       : PackedString(text, text == nullptr ? 0 : std::strlen(text)) {}
@@ -49,12 +52,14 @@ class PackedString {
 
   ~PackedString() { Clear(); }
 
-  std::size_t Size() const noexcept { return size_; }
+  std::size_t Size() const noexcept {
+    return IsShort() ? storage_.short_value.size : storage_.long_value.size;
+  }
 
-  bool Empty() const noexcept { return size_ == 0; }
+  bool Empty() const noexcept { return Size() == 0; }
 
   const char* Data() const noexcept {
-    return mode_ == Mode::kShort ? short_data_ : long_data_;
+    return IsShort() ? storage_.short_value.data : storage_.long_value.data;
   }
 
   std::string_view View() const noexcept { return std::string_view(Data(), Size()); }
@@ -78,64 +83,96 @@ class PackedString {
     return left.Size() < right.Size();
   }
 
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  static constexpr std::size_t DebugInlineCapacityForTest() noexcept {
+    return kInlineCapacity;
+  }
+
+  bool DebugIsInlineForTest() const noexcept { return IsShort(); }
+#endif
+
  private:
   template <typename Key, typename Value, std::size_t TargetBytes>
   friend class ZipList;
 
-  enum class Mode { kShort, kOwnedLong, kBorrowed };
+  enum class Mode : std::uint8_t { kShort = 0, kOwnedLong = 1, kBorrowed = 2 };
 
   static constexpr std::size_t kInlineCapacity = 14;
+  static constexpr std::size_t kMaxLongSize =
+      std::numeric_limits<std::uint32_t>::max();
+
+  union Storage {
+    struct {
+      char data[kInlineCapacity];
+      std::uint8_t size;
+      std::uint8_t tag;
+    } short_value;
+
+    struct {
+      const char* data;
+      std::uint32_t size;
+      std::uint8_t reserved[3];
+      std::uint8_t tag;
+    } long_value;
+
+    std::uint8_t raw[16];
+  };
 
   static PackedString Borrowed(const char* data, std::size_t size) noexcept {
     PackedString result;
-    if (size == 0) {
+    if (size == 0 || size > kMaxLongSize) {
       return result;
     }
-    result.size_ = size;
-    result.long_data_ = data;
-    result.mode_ = Mode::kBorrowed;
+    result.storage_.long_value.data = data;
+    result.storage_.long_value.size = static_cast<std::uint32_t>(size);
+    result.storage_.long_value.reserved[0] = 0;
+    result.storage_.long_value.reserved[1] = 0;
+    result.storage_.long_value.reserved[2] = 0;
+    result.storage_.long_value.tag = ToTag(Mode::kBorrowed);
     return result;
   }
 
   void Assign(const char* data, std::size_t size) {
-    size_ = size;
+    if (size > kMaxLongSize) {
+      throw std::length_error("PackedString length exceeds uint32_t max");
+    }
+    if (size != 0 && data == nullptr) {
+      throw std::invalid_argument("PackedString data is null");
+    }
     if (size <= kInlineCapacity) {
-      mode_ = Mode::kShort;
+      storage_.short_value.size = static_cast<std::uint8_t>(size);
       if (size != 0) {
-        std::memcpy(short_data_, data, size);
+        std::memcpy(storage_.short_value.data, data, size);
       }
+      storage_.short_value.tag = ToTag(Mode::kShort);
       return;
     }
 
     char* copy = new char[size];
     std::memcpy(copy, data, size);
-    long_data_ = copy;
-    mode_ = Mode::kOwnedLong;
+    storage_.long_value.data = copy;
+    storage_.long_value.size = static_cast<std::uint32_t>(size);
+    storage_.long_value.reserved[0] = 0;
+    storage_.long_value.reserved[1] = 0;
+    storage_.long_value.reserved[2] = 0;
+    storage_.long_value.tag = ToTag(Mode::kOwnedLong);
   }
 
   void Clear() noexcept {
-    if (mode_ == Mode::kOwnedLong) {
-      delete[] long_data_;
+    if (ModeValue() == Mode::kOwnedLong) {
+      delete[] storage_.long_value.data;
     }
-    size_ = 0;
-    long_data_ = nullptr;
-    mode_ = Mode::kShort;
+    SetShortEmpty();
   }
 
   void MoveFrom(PackedString* other) noexcept {
-    size_ = other->size_;
-    mode_ = other->mode_;
-    if (other->mode_ == Mode::kShort) {
-      if (size_ != 0) {
-        std::memcpy(short_data_, other->short_data_, size_);
-      }
+    if (other->IsShort()) {
+      storage_.short_value = other->storage_.short_value;
     } else {
-      long_data_ = other->long_data_;
+      storage_.long_value = other->storage_.long_value;
     }
 
-    other->size_ = 0;
-    other->long_data_ = nullptr;
-    other->mode_ = Mode::kShort;
+    other->SetShortEmpty();
   }
 
   void Swap(PackedString* other) noexcept {
@@ -144,11 +181,23 @@ class PackedString {
     MoveFrom(&temp);
   }
 
-  std::size_t size_ = 0;
-  Mode mode_ = Mode::kShort;
-  char short_data_[kInlineCapacity] = {};
-  const char* long_data_ = nullptr;
+  static constexpr std::uint8_t ToTag(Mode mode) noexcept {
+    return static_cast<std::uint8_t>(mode);
+  }
+
+  Mode ModeValue() const noexcept { return static_cast<Mode>(storage_.raw[15]); }
+
+  bool IsShort() const noexcept { return ModeValue() == Mode::kShort; }
+
+  void SetShortEmpty() noexcept {
+    storage_.short_value.size = 0;
+    storage_.short_value.tag = ToTag(Mode::kShort);
+  }
+
+  Storage storage_;
 };
+
+static_assert(sizeof(PackedString) == 16, "PackedString must be 16 bytes");
 
 }  // namespace immutable_container
 

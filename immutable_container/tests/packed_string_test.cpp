@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -21,6 +23,48 @@ void RequireEqual(const immutable_container::PackedString& actual,
   Require(actual.Size() == expected.size(), message + " size");
   Require(std::memcmp(actual.Data(), expected.data(), expected.size()) == 0,
           message + " bytes");
+}
+
+void TestPackedStringLayoutBudget() {
+  using PackedString = immutable_container::PackedString;
+  Require(sizeof(PackedString) == 16, "PackedString must stay within 16 bytes");
+  Require(PackedString::DebugInlineCapacityForTest() == std::size_t{14},
+          "PackedString keeps 14-byte inline capacity");
+}
+
+void TestPackedStringSixteenByteLayoutBehavior() {
+  using PackedString = immutable_container::PackedString;
+
+  const PackedString short_text("abcdefghijklmn");
+  Require(short_text.Size() == std::size_t{14}, "14-byte string size");
+  Require(short_text.ToString() == "abcdefghijklmn", "14-byte string content");
+  Require(short_text.DebugIsInlineForTest(), "14-byte string is inline");
+
+  const PackedString long_text("abcdefghijklmno");
+  Require(long_text.Size() == std::size_t{15}, "15-byte string size");
+  Require(long_text.ToString() == "abcdefghijklmno", "15-byte string content");
+  Require(!long_text.DebugIsInlineForTest(), "15-byte string is long");
+
+  PackedString copied = long_text;
+  Require(copied == long_text, "copied long string compares equal");
+  Require(copied.Data() != long_text.Data(),
+          "copied long string owns a distinct buffer");
+
+  PackedString moved = std::move(copied);
+  Require(moved == long_text, "moved long string keeps content");
+  Require(copied.Empty(), "moved-from string is empty");
+}
+
+void TestRejectsStringsLargerThanUint32() {
+  const std::size_t oversized =
+      static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1;
+  bool threw = false;
+  try {
+    immutable_container::PackedString ignored("x", oversized);
+  } catch (const std::length_error&) {
+    threw = true;
+  }
+  Require(threw, "strings larger than uint32_t are rejected with length_error");
 }
 
 void TestEmptyAndShortStrings() {
@@ -79,6 +123,9 @@ void TestEmbeddedNullAndOrdering() {
 
 int main() {
   try {
+    TestPackedStringLayoutBudget();
+    TestPackedStringSixteenByteLayoutBehavior();
+    TestRejectsStringsLargerThanUint32();
     TestEmptyAndShortStrings();
     TestLongStringAndCopyMove();
     TestEmbeddedNullAndOrdering();
