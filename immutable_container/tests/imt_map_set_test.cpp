@@ -311,6 +311,33 @@ void TestPackedMapAndSetBackends() {
   RequirePackedSetBehavior<BlockSet>("packed block-tree-backed ImtSet");
 }
 
+void TestPackedBlockMapValueStoragePersistence() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 4096>;
+  using Map = immutable_container::ImtMap<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, Tree>;
+
+  Map map;
+  const auto one = map.Insert(Pms("a"), Pms(std::string(64, 'x')));
+  Require(one.has_value(), "packed block map inserts 64-byte value");
+  const auto two = one->Set(Pms("b"), Pms(std::string(64, 'y')));
+  const auto three = two.Set(Pms("a"), Pms(std::string(64, 'z')));
+
+  Require(*one->Find(Pms("a")) == Pms(std::string(64, 'x')),
+          "old packed block map version keeps original value");
+  Require(*two.Find(Pms("a")) == Pms(std::string(64, 'x')),
+          "middle packed block map version keeps original value");
+  Require(*three.Find(Pms("a")) == Pms(std::string(64, 'z')),
+          "new packed block map version updates value");
+
+  const PackedString* first = three.Find(Pms("a"));
+  const PackedString* second = three.Find(Pms("a"));
+  Require(first == second, "packed block map value pointer remains stable");
+}
+
 }  // namespace
 
 int main() {
@@ -321,6 +348,7 @@ int main() {
     TestImtSetBehavior();
     TestImtSetStringBackends();
     TestPackedMapAndSetBackends();
+    TestPackedBlockMapValueStoragePersistence();
     std::cout << "imt_map_set_test passed\n";
     return 0;
   } catch (const std::exception& e) {

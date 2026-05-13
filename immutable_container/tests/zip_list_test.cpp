@@ -386,6 +386,95 @@ void TestPackedMapZipListCompactKeyRefsAndStableValues() {
           "compact packed map move finds external key value");
 }
 
+void TestPackedMapZipListValueStorageStrategy() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 4096>;
+
+  const auto block = ZipList::FromSortedEntries({
+      {RepeatedPacked('a', 32), RepeatedPacked('x', 64)},
+      {RepeatedPacked('b', 32), RepeatedPacked('y', 64)},
+  });
+
+  Require(block.DebugInlineValueBytesForTest() >= 128,
+          "packed map stores 64-byte values in block-local value payload");
+  RequireEqual(block.DebugExternalValueCountForTest(), std::size_t{0},
+               "packed map avoids external value allocations for 64-byte values");
+
+  const PackedString* value =
+      block.FindValue(RepeatedPacked('b', 32), std::less<PackedString>());
+  Require(value != nullptr, "packed map finds inline-slab value");
+  Require(value == block.FindValue(RepeatedPacked('b', 32), std::less<PackedString>()),
+          "packed map inline-slab value pointer is stable");
+  Require(*value == RepeatedPacked('y', 64), "packed map inline-slab value matches");
+#endif
+}
+
+void TestPackedMapZipListLargeValuesStillWork() {
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 4096>;
+
+  const auto block = ZipList::FromSortedEntries({
+      {Ps("a"), RepeatedPacked('x', 128)},
+      {Ps("b"), RepeatedPacked('y', 256)},
+      {Ps("c"), RepeatedPacked('z', 1024)},
+  });
+
+  Require(*block.FindValue(Ps("a"), std::less<PackedString>()) ==
+              RepeatedPacked('x', 128),
+          "packed map finds 128-byte value");
+  Require(*block.FindValue(Ps("b"), std::less<PackedString>()) ==
+              RepeatedPacked('y', 256),
+          "packed map finds 256-byte value");
+  Require(*block.FindValue(Ps("c"), std::less<PackedString>()) ==
+              RepeatedPacked('z', 1024),
+          "packed map finds 1024-byte value");
+}
+
+void TestPackedMapZipListBorrowedValueCopyMoveUpdateRegression() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 4096>;
+
+  const auto block = ZipList::FromSortedEntries({
+      {Ps("a"), RepeatedPacked('x', 64)},
+      {Ps("b"), RepeatedPacked('y', 64)},
+  });
+  RequireEqual(block.DebugExternalValueCountForTest(), std::size_t{0},
+               "packed map starts with borrowed 64-byte values");
+
+  ZipList copied = block;
+  RequireEqual(copied.DebugExternalValueCountForTest(), std::size_t{0},
+               "packed map copy rebuilds borrowed 64-byte values");
+  const PackedString* copied_value = copied.FindValue(Ps("b"), std::less<PackedString>());
+  Require(copied_value != nullptr, "packed map copy finds borrowed value");
+  Require(*copied_value == RepeatedPacked('y', 64),
+          "packed map copy preserves borrowed value content");
+  Require(copied_value == copied.FindValue(Ps("b"), std::less<PackedString>()),
+          "packed map copy keeps borrowed value pointer stable");
+
+  ZipList moved = std::move(copied);
+  RequireEqual(moved.DebugExternalValueCountForTest(), std::size_t{0},
+               "packed map move rebuilds borrowed 64-byte values");
+  const PackedString* moved_value = moved.FindValue(Ps("b"), std::less<PackedString>());
+  Require(moved_value != nullptr, "packed map move finds borrowed value");
+  Require(*moved_value == RepeatedPacked('y', 64),
+          "packed map move preserves borrowed value content");
+  Require(moved_value == moved.FindValue(Ps("b"), std::less<PackedString>()),
+          "packed map move keeps borrowed value pointer stable");
+
+  const auto updated = moved.WithUpdated(1, RepeatedPacked('z', 64));
+  RequireEqual(updated.DebugExternalValueCountForTest(), std::size_t{0},
+               "packed map update keeps 64-byte value in value slab");
+  Require(*updated.FindValue(Ps("b"), std::less<PackedString>()) ==
+              RepeatedPacked('z', 64),
+          "packed map update preserves borrowed value content");
+  Require(*moved.FindValue(Ps("b"), std::less<PackedString>()) ==
+              RepeatedPacked('y', 64),
+          "packed map update leaves previous borrowed value version unchanged");
+#endif
+}
+
 void TestPackedStringSetZipList() {
   using PackedString = immutable_container::PackedString;
   using UnitValue = immutable_container::UnitValue;
@@ -520,6 +609,9 @@ int main() {
     TestPackedStringMapPayloadBudgetAndLifetime();
     TestPackedMapZipListMetadataBudget();
     TestPackedMapZipListCompactKeyRefsAndStableValues();
+    TestPackedMapZipListValueStorageStrategy();
+    TestPackedMapZipListLargeValuesStillWork();
+    TestPackedMapZipListBorrowedValueCopyMoveUpdateRegression();
     TestPackedStringSetZipList();
     TestPackedStringSetPayloadBudgetAndLifetime();
     std::cout << "zip_list_test passed\n";
