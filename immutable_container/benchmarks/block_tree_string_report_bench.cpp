@@ -8,6 +8,7 @@
 #include <iostream>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -99,6 +100,7 @@ std::size_t ReadRepetitions(std::size_t size) {
 
 void RefreshJemallocEpoch();
 JemallocStats ReadJemallocStats();
+void FlushJemallocThreadCache();
 
 template <typename Tree>
 Tree BuildTree(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
@@ -178,12 +180,14 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
     miss_keys.push_back(MakeStringKey(i + size + 1, key_bytes));
   }
 
+  FlushJemallocThreadCache();
   RefreshJemallocEpoch();
   const JemallocStats start_stats = ReadJemallocStats();
   Tree tree;
   const long long build_us = TimeMicros([&] {
     tree = BuildTree<Tree>(indexes, key_bytes, value_bytes);
   });
+  FlushJemallocThreadCache();
   RefreshJemallocEpoch();
   const JemallocStats after_build_stats = ReadJemallocStats();
   if (size != 0) {
@@ -238,6 +242,10 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
 }
 
 #ifdef IMMUTABLE_CONTAINER_USE_JEMALLOC
+void FlushJemallocThreadCache() {
+  mallctl("thread.tcache.flush", nullptr, nullptr, nullptr, 0);
+}
+
 void RefreshJemallocEpoch() {
   std::uint64_t epoch = 1;
   std::size_t epoch_size = sizeof(epoch);
@@ -259,6 +267,11 @@ JemallocStats ReadJemallocStats() {
   return stats;
 }
 #else
+void FlushJemallocThreadCache() {
+  std::cerr << "block_tree_string_report_bench requires IMMUTABLE_CONTAINER_USE_JEMALLOC\n";
+  std::exit(2);
+}
+
 void RefreshJemallocEpoch() {
   std::cerr << "block_tree_string_report_bench requires IMMUTABLE_CONTAINER_USE_JEMALLOC\n";
   std::exit(2);
@@ -270,38 +283,103 @@ JemallocStats ReadJemallocStats() {
 }
 #endif
 
-template <typename Tree>
-void RunTree(const std::string& name) {
-  for (std::size_t key_bytes : {32, 64}) {
-    for (std::size_t value_bytes : {64, 128, 256, 1024}) {
-      for (std::size_t size : {1, 10, 100, 1000, 10000, 100000}) {
-        for (const char* pattern : {"sorted", "random"}) {
-          RunCase<Tree>(name, pattern, size, key_bytes, value_bytes);
-        }
-      }
-    }
+template <typename T>
+bool ParseUnsigned(const std::string& text, T* value) {
+  std::istringstream input(text);
+  T parsed = 0;
+  input >> parsed;
+  if (!input || !input.eof()) {
+    return false;
   }
+  *value = parsed;
+  return true;
+}
+
+void PrintUsage(const char* program) {
+  std::cerr << "usage: " << program
+            << " --env | --name NAME --pattern PATTERN --size N"
+            << " --key-bytes N --value-bytes N\n";
+}
+
+void RunNamedCase(const std::string& name, const std::string& pattern, std::size_t size,
+                  std::size_t key_bytes, std::size_t value_bytes) {
+  if (name == "immutable_tree") {
+    using StringTree = immutable_container::ImmutableTree<std::string, std::string>;
+    RunCase<StringTree>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "block_tree_2048") {
+    using BlockTree2048 =
+        immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
+                                               immutable_container::NonAtomicRefCount, 2048>;
+    RunCase<BlockTree2048>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  if (name == "block_tree_4096") {
+    using BlockTree4096 =
+        immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
+                                               immutable_container::NonAtomicRefCount, 4096>;
+    RunCase<BlockTree4096>(name, pattern, size, key_bytes, value_bytes);
+    return;
+  }
+  std::cerr << "unknown implementation name: " << name << "\n";
+  std::exit(2);
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
 #ifndef IMMUTABLE_CONTAINER_USE_JEMALLOC
   std::cerr << "block_tree_string_report_bench requires IMMUTABLE_CONTAINER_USE_JEMALLOC\n";
   return 2;
 #else
-  using StringTree = immutable_container::ImmutableTree<std::string, std::string>;
-  using BlockTree2048 =
-      immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
-                                             immutable_container::NonAtomicRefCount, 2048>;
-  using BlockTree4096 =
-      immutable_container::ImmutableBlockTree<std::string, std::string, std::less<std::string>,
-                                             immutable_container::NonAtomicRefCount, 4096>;
+  if (argc == 2 && std::string(argv[1]) == "--env") {
+    PrintEnvRow();
+    return 0;
+  }
 
-  PrintEnvRow();
-  RunTree<StringTree>("immutable_tree");
-  RunTree<BlockTree2048>("block_tree_2048");
-  RunTree<BlockTree4096>("block_tree_4096");
+  std::string name;
+  std::string pattern;
+  std::size_t size = 0;
+  std::size_t key_bytes = 0;
+  std::size_t value_bytes = 0;
+  bool has_name = false;
+  bool has_pattern = false;
+  bool has_size = false;
+  bool has_key_bytes = false;
+  bool has_value_bytes = false;
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (i + 1 >= argc) {
+      PrintUsage(argv[0]);
+      return 2;
+    }
+    const std::string value = argv[++i];
+    if (arg == "--name") {
+      name = value;
+      has_name = true;
+    } else if (arg == "--pattern") {
+      pattern = value;
+      has_pattern = true;
+    } else if (arg == "--size") {
+      has_size = ParseUnsigned(value, &size);
+    } else if (arg == "--key-bytes") {
+      has_key_bytes = ParseUnsigned(value, &key_bytes);
+    } else if (arg == "--value-bytes") {
+      has_value_bytes = ParseUnsigned(value, &value_bytes);
+    } else {
+      PrintUsage(argv[0]);
+      return 2;
+    }
+  }
+
+  if (!has_name || !has_pattern || !has_size || !has_key_bytes || !has_value_bytes) {
+    PrintUsage(argv[0]);
+    return 2;
+  }
+
+  RunNamedCase(name, pattern, size, key_bytes, value_bytes);
 
   return static_cast<int>(g_size_sink == 0);
 #endif

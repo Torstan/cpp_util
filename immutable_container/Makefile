@@ -29,6 +29,8 @@ CLANG_TIDY_FLAGS ?= --warnings-as-errors=clang-analyzer-core.StackAddressEscape
 CPPCHECK ?= bash ../scripts/run_cppcheck_errors.sh
 CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSystem
 
+.DELETE_ON_ERROR:
+
 .PHONY: all test bench bench-jemalloc string-report clean lint
 
 all: $(TEST_BINS)
@@ -66,7 +68,23 @@ $(STRING_REPORT_BENCH_BIN): $(STRING_REPORT_BENCH_SRC) $(HEADERS) Makefile $(JEM
 	$(CXX) $(CPPFLAGS) -I$(JEMALLOC_INCLUDE) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LOCAL_LIBS)
 
 $(STRING_REPORT_RAW): $(STRING_REPORT_BENCH_BIN)
-	./$(STRING_REPORT_BENCH_BIN) > $(STRING_REPORT_RAW)
+	@tmp="$(STRING_REPORT_RAW).tmp"; \
+	rm -f "$$tmp"; \
+	./$(STRING_REPORT_BENCH_BIN) --env > "$$tmp"; \
+	for name in immutable_tree block_tree_2048 block_tree_4096; do \
+		for pattern in sorted random; do \
+			for key_bytes in 32 64; do \
+				for value_bytes in 64 128 256 1024; do \
+					for size in 1 10 100 1000 10000 100000; do \
+						./$(STRING_REPORT_BENCH_BIN) --name "$$name" --pattern "$$pattern" \
+							--size "$$size" --key-bytes "$$key_bytes" \
+							--value-bytes "$$value_bytes" >> "$$tmp" || exit $$?; \
+					done; \
+				done; \
+			done; \
+		done; \
+	done; \
+	mv "$$tmp" "$(STRING_REPORT_RAW)"
 
 $(STRING_REPORT_HTML): $(STRING_REPORT_RAW) scripts/generate_block_tree_report.py Makefile | $(REPORT_DIR)
 	python3 scripts/generate_block_tree_report.py --input $(STRING_REPORT_RAW) --output $(STRING_REPORT_HTML) --bench-command ./$(STRING_REPORT_BENCH_BIN) --jemalloc-path $(JEMALLOC_DIR)
