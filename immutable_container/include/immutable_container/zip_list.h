@@ -2,8 +2,8 @@
 #define IMMUTABLE_CONTAINER_ZIP_LIST_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <deque>
 #include <new>
 #include <stdexcept>
 #include <string_view>
@@ -412,45 +412,38 @@ class ZipList<PackedString, PackedString, TargetBytes> {
 
   bool Empty() const { return count_ == 0; }
 
-  bool Full() const { return count_ == DefaultCapacity() || RemainingPayload() == 0; }
+  bool Full() const { return count_ == DefaultCapacity(); }
 
   bool CanInsert(const Key& key, const Value& value) const {
+    (void)value;
     if (count_ == DefaultCapacity()) {
       return false;
     }
     FitSummary summary;
     for (std::size_t i = 0; i < count_; ++i) {
-      if (!AccumulateEntry(KeyAt(i), ValueAt(i), &summary)) {
+      if (!AccumulateKey(KeyAt(i), &summary)) {
         return false;
       }
     }
-    return AccumulateEntry(key, value, &summary);
+    return AccumulateKey(key, &summary);
   }
 
   bool CanUpdate(std::size_t index, const Value& value) const {
-    if (index >= count_) {
-      return false;
-    }
-    FitSummary summary;
-    for (std::size_t i = 0; i < count_; ++i) {
-      if (!AccumulateEntry(KeyAt(i), i == index ? value : ValueAt(i), &summary)) {
-        return false;
-      }
-    }
-    return true;
+    (void)value;
+    return index < count_;
   }
 
-  Entry operator[](std::size_t index) const { return {KeyAt(index), ValueAt(index)}; }
+  Entry operator[](std::size_t index) const { return {OwnedKeyAt(index), ValueAt(index)}; }
 
   Entry Front() const { return (*this)[0]; }
 
   Entry Back() const { return (*this)[count_ - 1]; }
 
-  const Key& FrontKey() const { return KeyAt(0); }
+  Key FrontKey() const { return KeyAt(0); }
 
-  const Key& BackKey() const { return KeyAt(count_ - 1); }
+  Key BackKey() const { return KeyAt(count_ - 1); }
 
-  const Key& KeyAt(std::size_t index) const { return *KeySlot(index); }
+  Key KeyAt(std::size_t index) const { return BorrowedKeyAt(index); }
 
   const Value& ValueAt(std::size_t index) const { return *ValueSlot(index); }
 
@@ -477,7 +470,8 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     if (index == count_) {
       return nullptr;
     }
-    if (comp(key, KeyAt(index)) || comp(KeyAt(index), key)) {
+    const Key found_key = KeyAt(index);
+    if (comp(key, found_key) || comp(found_key, key)) {
       return nullptr;
     }
     return ValueSlot(index);
@@ -626,12 +620,12 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static bool CanMerge(const ZipList& left, const ZipList& right) {
     FitSummary summary;
     for (std::size_t i = 0; i < left.Count(); ++i) {
-      if (!AccumulateEntry(left.KeyAt(i), left.ValueAt(i), &summary)) {
+      if (!AccumulateKey(left.KeyAt(i), &summary)) {
         return false;
       }
     }
     for (std::size_t i = 0; i < right.Count(); ++i) {
-      if (!AccumulateEntry(right.KeyAt(i), right.ValueAt(i), &summary)) {
+      if (!AccumulateKey(right.KeyAt(i), &summary)) {
         return false;
       }
     }
@@ -662,22 +656,29 @@ class ZipList<PackedString, PackedString, TargetBytes> {
 
   void AppendTo(std::vector<Entry>* output) const {
     for (std::size_t i = 0; i < count_; ++i) {
-      output->push_back({KeyAt(i), ValueAt(i)});
+      output->push_back({OwnedKeyAt(i), ValueAt(i)});
     }
   }
 
  private:
-  using KeyStorage = typename std::aligned_storage<sizeof(Key), alignof(Key)>::type;
   using ValueStorage = typename std::aligned_storage<sizeof(Value), alignof(Value)>::type;
 
-  static constexpr std::size_t kEntrySlotBytes = sizeof(KeyStorage) + sizeof(ValueStorage);
-  static constexpr std::size_t kEstimatedInlinePayloadBytes = 96;
-  static constexpr std::size_t kFixedBytes = sizeof(std::size_t) * 2 + sizeof(std::deque<PackedString>);
+  struct KeyRef {
+    std::uint32_t offset = 0;
+    std::uint32_t size = 0;
+  };
+
+  static constexpr std::uint32_t kExternalKeyMask = 0x80000000u;
+  static constexpr std::uint32_t kKeyOffsetMask = ~kExternalKeyMask;
+  static constexpr std::size_t kEntrySlotBytes = sizeof(KeyRef) + sizeof(ValueStorage);
+  static constexpr std::size_t kEstimatedInlineKeyBytes = 64;
+  static constexpr std::size_t kFixedBytes =
+      sizeof(std::size_t) * 2 + sizeof(std::vector<PackedString>);
   static constexpr std::size_t kUsableBytes = TargetBytes > kFixedBytes ? TargetBytes - kFixedBytes : 1;
 
   static constexpr std::size_t ComputeCapacity() {
     const std::size_t raw =
-        kUsableBytes / (kEntrySlotBytes + kEstimatedInlinePayloadBytes);
+        kUsableBytes / (kEntrySlotBytes + kEstimatedInlineKeyBytes);
     return raw == 0 ? 1 : raw;
   }
 
@@ -689,14 +690,6 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static constexpr std::size_t kCapacity = ComputeCapacity();
   static constexpr std::size_t kPayloadBytes = ComputePayloadBytes();
 
-  Key* KeySlot(std::size_t index) {
-    return reinterpret_cast<Key*>(&key_storage_[index]);
-  }
-
-  const Key* KeySlot(std::size_t index) const {
-    return reinterpret_cast<const Key*>(&key_storage_[index]);
-  }
-
   Value* ValueSlot(std::size_t index) {
     return reinterpret_cast<Value*>(&value_storage_[index]);
   }
@@ -707,41 +700,44 @@ class ZipList<PackedString, PackedString, TargetBytes> {
 
   std::size_t RemainingPayload() const { return kPayloadBytes - payload_used_; }
 
-  static std::size_t EntryPayloadSize(const Key& key, const Value& value) {
-    return key.Size() + value.Size();
+  static bool KeyRefIsExternal(const KeyRef& ref) {
+    return (ref.offset & kExternalKeyMask) != 0;
   }
 
-  static bool UsesExternalPayload(const Key& key, const Value& value) {
-    return EntryPayloadSize(key, value) > kPayloadBytes;
+  static std::size_t KeyRefOffset(const KeyRef& ref) {
+    return ref.offset & kKeyOffsetMask;
+  }
+
+  static bool UsesExternalKey(const Key& key) {
+    return key.Size() > kPayloadBytes;
   }
 
   struct FitSummary {
     std::size_t count = 0;
     std::size_t inline_bytes = 0;
-    bool has_external_entry = false;
+    bool has_external_key = false;
   };
 
   static bool SummaryFits(const FitSummary& summary) {
     if (summary.count > DefaultCapacity()) {
       return false;
     }
-    if (summary.has_external_entry) {
+    if (summary.has_external_key) {
       return summary.count == 1;
     }
     return summary.inline_bytes <= kPayloadBytes;
   }
 
-  static bool AccumulateEntry(const Key& key, const Value& value,
-                              FitSummary* summary) {
+  static bool AccumulateKey(const Key& key, FitSummary* summary) {
     ++summary->count;
-    if (UsesExternalPayload(key, value)) {
-      summary->has_external_entry = true;
+    if (UsesExternalKey(key)) {
+      summary->has_external_key = true;
     } else {
-      const std::size_t entry_bytes = EntryPayloadSize(key, value);
-      if (entry_bytes > kPayloadBytes - summary->inline_bytes) {
+      const std::size_t key_bytes = key.Size();
+      if (key_bytes > kPayloadBytes - summary->inline_bytes) {
         return false;
       }
-      summary->inline_bytes += entry_bytes;
+      summary->inline_bytes += key_bytes;
     }
     return SummaryFits(*summary);
   }
@@ -750,7 +746,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static bool EntriesFit(Iterator first, Iterator last) {
     FitSummary summary;
     for (Iterator current = first; current != last; ++current) {
-      if (!AccumulateEntry(current->first, current->second, &summary)) {
+      if (!AccumulateKey(current->first, &summary)) {
         return false;
       }
     }
@@ -776,12 +772,35 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return blocks;
   }
 
-  std::string_view StoreBytes(const PackedString& text, bool use_external_payload) {
-    if (use_external_payload) {
-      external_payloads_.push_back(text);
-      const PackedString& stored = external_payloads_.back();
-      return std::string_view(stored.Data(), stored.Size());
+  Key BorrowedKeyAt(std::size_t index) const {
+    const KeyRef& ref = key_refs_[index];
+    if (KeyRefIsExternal(ref)) {
+      const PackedString& stored = external_keys_[KeyRefOffset(ref)];
+      return Key::Borrowed(stored.Data(), stored.Size());
     }
+    return Key::Borrowed(payload_ + KeyRefOffset(ref), ref.size);
+  }
+
+  Key OwnedKeyAt(std::size_t index) const {
+    const Key key = BorrowedKeyAt(index);
+    return Key(key.Data(), key.Size());
+  }
+
+  KeyRef StoreKey(const PackedString& text) {
+    if (text.Size() > kKeyOffsetMask) {
+      throw std::logic_error("ZipList key exceeds compact key reference");
+    }
+
+    if (UsesExternalKey(text)) {
+      if (external_keys_.size() > kKeyOffsetMask) {
+        throw std::logic_error("ZipList external key index exceeds compact key reference");
+      }
+      const std::size_t index = external_keys_.size();
+      external_keys_.push_back(text);
+      return KeyRef{static_cast<std::uint32_t>(index) | kExternalKeyMask,
+                    static_cast<std::uint32_t>(text.Size())};
+    }
+
     if (text.Size() > RemainingPayload()) {
       throw std::logic_error("ZipList payload capacity exceeded");
     }
@@ -791,7 +810,8 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       std::memcpy(payload_ + offset, text.Data(), text.Size());
     }
     payload_used_ += text.Size();
-    return std::string_view(payload_ + offset, text.Size());
+    return KeyRef{static_cast<std::uint32_t>(offset),
+                  static_cast<std::uint32_t>(text.Size())};
   }
 
   void ConstructBack(const Key& key, const Value& value) {
@@ -802,19 +822,17 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       throw std::logic_error("ZipList payload capacity exceeded");
     }
 
-    const bool use_external_payload = UsesExternalPayload(key, value);
-    const std::string_view key_view = StoreBytes(key, use_external_payload);
-    const std::string_view value_view = StoreBytes(value, use_external_payload);
-    Key key_ref = Key::Borrowed(key_view.data(), key_view.size());
-    Value value_ref = Value::Borrowed(value_view.data(), value_view.size());
-
-    new (KeySlot(count_)) Key(std::move(key_ref));
+    const std::size_t previous_payload_used = payload_used_;
+    const std::size_t previous_external_key_count = external_keys_.size();
+    const KeyRef key_ref = StoreKey(key);
     try {
-      new (ValueSlot(count_)) Value(std::move(value_ref));
+      new (ValueSlot(count_)) Value(value);
     } catch (...) {
-      KeySlot(count_)->~Key();
+      payload_used_ = previous_payload_used;
+      external_keys_.resize(previous_external_key_count);
       throw;
     }
+    key_refs_[count_] = key_ref;
     ++count_;
   }
 
@@ -845,18 +863,17 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     while (count_ > 0) {
       --count_;
       ValueSlot(count_)->~Value();
-      KeySlot(count_)->~Key();
     }
-    external_payloads_.clear();
+    external_keys_.clear();
     payload_used_ = 0;
   }
 
-  KeyStorage key_storage_[kCapacity];
+  KeyRef key_refs_[kCapacity] = {};
   ValueStorage value_storage_[kCapacity];
   char payload_[kPayloadBytes] = {};
   std::size_t count_ = 0;
   std::size_t payload_used_ = 0;
-  std::deque<PackedString> external_payloads_;
+  std::vector<PackedString> external_keys_;
 };
 
 template <std::size_t TargetBytes>

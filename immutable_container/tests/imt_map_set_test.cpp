@@ -275,6 +275,38 @@ void TestPackedMapAndSetBackends() {
 
   RequirePackedMapBehavior<TreeMap>("packed tree-backed ImtMap");
   RequirePackedMapBehavior<BlockMap>("packed block-tree-backed ImtMap");
+
+  using LargeValueBlockMapTree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 4096>;
+  using LargeValueBlockMap =
+      immutable_container::ImtMap<PackedString, PackedString, std::less<PackedString>,
+                                  immutable_container::NonAtomicRefCount,
+                                  LargeValueBlockMapTree>;
+
+  LargeValueBlockMap large_values;
+  for (int i = 0; i < 6; ++i) {
+    const std::string key = "k" + std::to_string(i);
+    const std::string value(2000, static_cast<char>('a' + i));
+    const auto next = large_values.Insert(Pms(key), Pms(value));
+    Require(next.has_value(), "packed block-tree ImtMap inserts large value");
+    large_values = *next;
+  }
+  RequireEqual(large_values.Size(), std::size_t{6},
+               "packed block-tree ImtMap keeps all large-value entries");
+  for (int i = 0; i < 6; ++i) {
+    const std::string key = "k" + std::to_string(i);
+    const std::string value(2000, static_cast<char>('a' + i));
+    const PackedString* found = large_values.Find(Pms(key));
+    Require(found != nullptr, "packed block-tree ImtMap finds large-value key");
+    Require(*found == Pms(value), "packed block-tree ImtMap returns large value");
+  }
+  const auto stats = large_values.DebugStatsForTest();
+  RequireEqual(stats.entry_count, std::size_t{6},
+               "packed block-tree ImtMap debug stats count entries");
+  Require(stats.node_count < stats.entry_count,
+          "packed block-tree ImtMap packs multiple large values per block");
+
   RequirePackedSetBehavior<TreeSet>("packed tree-backed ImtSet");
   RequirePackedSetBehavior<BlockSet>("packed block-tree-backed ImtSet");
 }

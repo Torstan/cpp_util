@@ -201,13 +201,20 @@ void TestPackedStringMapZipList() {
   });
 
   Require(ZipList::UsesPackedStorageForTest(), "packed map specialization is active");
+  Require(ZipList::DefaultCapacity() >= 6,
+          "packed map v2 removes full per-entry key slots from capacity math");
   RequireEqual(block.Count(), std::size_t{3}, "packed map count");
   Require(block.FrontKey() == Ps("alpha"), "packed map FrontKey");
   Require(block.BackKey() == Ps("charlie"), "packed map BackKey");
   Require(block.KeyAt(1) == Ps("bravo"), "packed map KeyAt");
   Require(block.ValueAt(1) == Ps("two"), "packed map ValueAt");
-  Require(*block.FindValue(Ps("charlie"), std::less<PackedString>()) == Ps("three"),
-          "packed map FindValue hit");
+  const PackedString* found = block.FindValue(Ps("charlie"), std::less<PackedString>());
+  Require(found != nullptr, "packed map FindValue hit");
+  Require(*found == Ps("three"), "packed map FindValue returns stored value");
+  Require(found == block.FindValue(Ps("charlie"), std::less<PackedString>()),
+          "packed map FindValue returns stable value pointer");
+  Require(block.FindValue(Ps("bravo"), std::less<PackedString>()) == &block.ValueAt(1),
+          "packed map FindValue returns value slot pointer");
   Require(block.FindValue(Ps("delta"), std::less<PackedString>()) == nullptr,
           "packed map FindValue miss");
 
@@ -234,13 +241,13 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   using ZipList = immutable_container::ZipList<PackedString, PackedString, 1024>;
 
   const auto left = ZipList::FromSortedEntries({
-      {RepeatedPacked('a', 150), RepeatedPacked('b', 150)},
+      {RepeatedPacked('a', 320), RepeatedPacked('b', 180)},
   });
   const auto right = ZipList::FromSortedEntries({
-      {RepeatedPacked('c', 150), RepeatedPacked('d', 150)},
+      {RepeatedPacked('c', 320), RepeatedPacked('d', 180)},
   });
 
-  Require(!left.CanInsert(RepeatedPacked('e', 150), RepeatedPacked('f', 150)),
+  Require(!left.CanInsert(RepeatedPacked('e', 320), RepeatedPacked('f', 180)),
           "packed map refuses normal entry when payload budget is exhausted");
   Require(!ZipList::CanMerge(left, right),
           "packed map CanMerge rejects over-budget combined payload");
@@ -253,15 +260,19 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   Require(*oversized.FindValue(Ps("huge"), std::less<PackedString>()) ==
               RepeatedPacked('x', 2000),
           "packed map finds oversized external value");
-  Require(!oversized.CanInsert(Ps("small"), Ps("value")),
-          "packed map refuses to add normal entry beside oversized record");
-  Require(!left.CanInsert(Ps("oversized"), RepeatedPacked('y', 2000)),
-          "packed map refuses oversized entry in non-empty block");
-  Require(!ZipList::CanMerge(oversized, left),
-          "packed map refuses to merge oversized record with other entries");
-  RequireThrowsLogic(
-      [&] { left.WithInserted(1, Ps("oversized"), RepeatedPacked('z', 2000)); },
-      "packed map direct insert rejects oversized entry in non-empty block");
+  Require(oversized.CanInsert(Ps("small"), Ps("value")),
+          "packed map v2 can add normal key beside oversized value");
+
+  const auto two_large_values =
+      oversized.WithInserted(1, Ps("small"), RepeatedPacked('y', 2000));
+  RequireEqual(two_large_values.Count(), std::size_t{2},
+               "packed map v2 stores multiple large values in one block");
+  Require(*two_large_values.FindValue(Ps("huge"), std::less<PackedString>()) ==
+              RepeatedPacked('x', 2000),
+          "packed map v2 preserves first large value");
+  Require(*two_large_values.FindValue(Ps("small"), std::less<PackedString>()) ==
+              RepeatedPacked('y', 2000),
+          "packed map v2 preserves inserted large value");
 
   const auto middle_insert_base = ZipList::FromSortedEntries({
       {Ps("a"), RepeatedPacked('a', 50)},
@@ -269,11 +280,13 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   });
   const auto insert_blocks =
       middle_insert_base.SplitWithInsertedBlocks(1, Ps("b"), RepeatedPacked('B', 2000));
-  RequireEqual(insert_blocks.size(), std::size_t{3},
-               "packed map split isolates middle oversized insert");
-  Require(insert_blocks[0].FrontKey() == Ps("a"), "packed map first split block key");
-  Require(insert_blocks[1].FrontKey() == Ps("b"), "packed map oversized split block key");
-  Require(insert_blocks[2].FrontKey() == Ps("c"), "packed map final split block key");
+  RequireEqual(insert_blocks.size(), std::size_t{1},
+               "packed map v2 does not split solely because a value is large");
+  RequireEqual(insert_blocks[0].Count(), std::size_t{3},
+               "packed map v2 keeps small-key large-value entries together");
+  Require(*insert_blocks[0].FindValue(Ps("b"), std::less<PackedString>()) ==
+              RepeatedPacked('B', 2000),
+          "packed map v2 split path preserves large inserted value");
 
   const auto middle_update_base = ZipList::FromSortedEntries({
       {Ps("a"), RepeatedPacked('a', 50)},
@@ -282,22 +295,31 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   });
   const auto update_blocks =
       middle_update_base.SplitWithUpdatedBlocks(1, RepeatedPacked('U', 2000));
-  RequireEqual(update_blocks.size(), std::size_t{3},
-               "packed map split isolates middle oversized update");
-  Require(update_blocks[1].FrontKey() == Ps("b"), "packed map updated split block key");
-  Require(*update_blocks[1].FindValue(Ps("b"), std::less<PackedString>()) ==
+  RequireEqual(update_blocks.size(), std::size_t{1},
+               "packed map v2 does not split solely because updated value is large");
+  RequireEqual(update_blocks[0].Count(), std::size_t{3},
+               "packed map v2 keeps updated large value with small keys");
+  Require(*update_blocks[0].FindValue(Ps("b"), std::less<PackedString>()) ==
               RepeatedPacked('U', 2000),
           "packed map updated split block value");
 
   ZipList copied = oversized;
-  Require(*copied.FindValue(Ps("huge"), std::less<PackedString>()) ==
-              RepeatedPacked('x', 2000),
+  const PackedString* copied_value =
+      copied.FindValue(Ps("huge"), std::less<PackedString>());
+  Require(copied_value != nullptr, "packed map copy finds oversized external value");
+  Require(*copied_value == RepeatedPacked('x', 2000),
           "packed map copy keeps oversized external value");
+  Require(copied_value == copied.FindValue(Ps("huge"), std::less<PackedString>()),
+          "packed map copy keeps stable oversized value pointer");
 
   ZipList moved = std::move(copied);
-  Require(*moved.FindValue(Ps("huge"), std::less<PackedString>()) ==
-              RepeatedPacked('x', 2000),
+  const PackedString* moved_value =
+      moved.FindValue(Ps("huge"), std::less<PackedString>());
+  Require(moved_value != nullptr, "packed map move finds oversized external value");
+  Require(*moved_value == RepeatedPacked('x', 2000),
           "packed map move keeps oversized external value");
+  Require(moved_value == moved.FindValue(Ps("huge"), std::less<PackedString>()),
+          "packed map move keeps stable oversized value pointer");
 
   const auto empty = ZipList::FromSortedEntries({
       {Ps(""), Ps("")},
