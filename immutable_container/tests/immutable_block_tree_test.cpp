@@ -10,6 +10,7 @@
 
 #include "immutable_container/immutable_block_tree.h"
 #include "immutable_container/packed_string.h"
+#include "immutable_container/unit_value.h"
 
 namespace {
 
@@ -32,6 +33,19 @@ immutable_container::PackedString Pbs(std::string_view text) {
 
 immutable_container::PackedString RepeatedPackedString(char ch, std::size_t size) {
   return immutable_container::PackedString(std::string(size, ch));
+}
+
+immutable_container::PackedString PackedKey(int key) {
+  std::string text = "key-";
+  const int thousands = key / 1000;
+  const int hundreds = (key / 100) % 10;
+  const int tens = (key / 10) % 10;
+  const int ones = key % 10;
+  text.push_back(static_cast<char>('0' + thousands));
+  text.push_back(static_cast<char>('0' + hundreds));
+  text.push_back(static_cast<char>('0' + tens));
+  text.push_back(static_cast<char>('0' + ones));
+  return immutable_container::PackedString(text);
 }
 
 template <typename Tree>
@@ -356,6 +370,109 @@ void TestRandomizedMapModelMaintainsInvariants() {
   }
 }
 
+void TestPackedStringBlockTreeMapBehavior() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 512>;
+
+  Tree tree;
+  const auto one = tree.Insert(Pbs("b"), Pbs("two"));
+  Require(one.has_value(), "packed map tree insert b");
+  const auto two = one->Insert(Pbs("a"), Pbs("one"));
+  Require(two.has_value(), "packed map tree insert a");
+  const auto three = two->Set(Pbs("c"), Pbs("three"));
+  const auto changed = three.Set(Pbs("b"), Pbs("TWO"));
+
+  Require(*three.Find(Pbs("b")) == Pbs("two"), "packed map old value remains");
+  Require(*changed.Find(Pbs("b")) == Pbs("TWO"), "packed map updated value");
+  Require(changed.Contains(Pbs("a")), "packed map contains a");
+  Require(changed.ToVector()[0].first == Pbs("a"), "packed map ToVector sorted");
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(changed.DebugValidateInvariantsForTest(), "packed map invariants");
+#endif
+}
+
+void TestPackedStringBlockTreeSetBehavior() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, UnitValue, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 512>;
+
+  Tree tree;
+  tree = *tree.Insert(Pbs("b"), UnitValue{});
+  tree = *tree.Insert(Pbs("a"), UnitValue{});
+  tree = tree.Set(Pbs("c"), UnitValue{});
+
+  Require(tree.Contains(Pbs("a")), "packed set tree contains a");
+  Require(tree.Contains(Pbs("b")), "packed set tree contains b");
+  Require(tree.Contains(Pbs("c")), "packed set tree contains c");
+  const auto erased = tree.Erase(Pbs("b"));
+  Require(erased.has_value(), "packed set tree erase b");
+  Require(!erased->Contains(Pbs("b")), "packed set tree erased b");
+  Require(tree.Contains(Pbs("b")), "packed set tree old version remains");
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(tree.DebugValidateInvariantsForTest(), "packed set tree invariants");
+#endif
+}
+
+void TestPackedStringBlockTreeManySplitBlocks() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 512>;
+
+  Tree tree;
+  std::map<PackedString, PackedString> expected;
+  for (int key = 0; key < 80; key += 2) {
+    const auto packed_key = PackedKey(key);
+    const auto value = RepeatedPackedString(static_cast<char>('a' + (key % 26)), 50);
+    auto next = tree.Insert(packed_key, value);
+    Require(next.has_value(), "packed many-split sorted insert succeeds");
+    tree = *next;
+    expected.emplace(packed_key, value);
+  }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  const auto before_stats = tree.DebugStatsForTest();
+  Require(before_stats.node_count >= 5, "packed many-split tree has at least five blocks");
+  Require(tree.Height() >= 3, "packed many-split tree has a split below root");
+  Require(tree.DebugValidateInvariantsForTest(), "packed many-split initial invariants");
+#endif
+
+  const auto updated_key = PackedKey(40);
+  const auto updated_value = RepeatedPackedString('U', 2000);
+  tree = tree.Set(updated_key, updated_value);
+  expected[updated_key] = updated_value;
+
+  const auto inserted_key = PackedKey(41);
+  const auto inserted_value = RepeatedPackedString('I', 2000);
+  auto inserted = tree.Insert(inserted_key, inserted_value);
+  Require(inserted.has_value(), "packed many-split oversized middle insert succeeds");
+  tree = *inserted;
+  expected.emplace(inserted_key, inserted_value);
+
+  std::vector<std::pair<PackedString, PackedString>> expected_vector;
+  expected_vector.reserve(expected.size());
+  for (const auto& item : expected) {
+    expected_vector.push_back(item);
+  }
+  Require(tree.ToVector() == expected_vector, "packed many-split ToVector sorted");
+  for (const auto& item : expected_vector) {
+    const PackedString* found = tree.Find(item.first);
+    Require(found != nullptr, "packed many-split finds expected key");
+    Require(*found == item.second, "packed many-split stores expected value");
+  }
+
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  const auto after_stats = tree.DebugStatsForTest();
+  Require(after_stats.node_count >= 5, "packed many-split tree keeps multiple blocks");
+  Require(tree.Height() >= 3, "packed many-split tree stays below-root split");
+  Require(tree.DebugValidateInvariantsForTest(), "packed many-split final invariants");
+#endif
+}
+
 void TestPackedStringBlockTreeUpdateCanSplitBlock() {
   using PackedString = immutable_container::PackedString;
   using Tree = immutable_container::ImmutableBlockTree<
@@ -410,6 +527,9 @@ int main() {
     TestSplitCreatesMultipleBlocksAndStats();
     TestSharedNodeObservation();
     TestRandomizedMapModelMaintainsInvariants();
+    TestPackedStringBlockTreeMapBehavior();
+    TestPackedStringBlockTreeSetBehavior();
+    TestPackedStringBlockTreeManySplitBlocks();
     TestPackedStringBlockTreeUpdateCanSplitBlock();
     std::cout << "immutable_block_tree_test passed\n";
     return 0;
