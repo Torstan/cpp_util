@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
 #include <unordered_set>
 #endif
@@ -22,26 +25,33 @@ template <typename Key, typename Value, typename Comp = std::less<Key>,
           std::size_t TargetBlockBytes = 4096>
 class ImmutableBlockTree {
  private:
-  using Block = ZipList<Key, Value, TargetBlockBytes>;
-  using Entry = typename Block::Entry;
-
   struct Node;
   using NodePtr = SharedPtr<const Node>;
+
+  static constexpr std::size_t kExpectedNodePaddingBytes = 16;
+  static constexpr std::size_t kNodeEnvelopeBytes =
+      sizeof(typename RefCountPolicy::Counter) + sizeof(NodePtr) * 2 +
+      sizeof(std::uint32_t) + sizeof(std::uint16_t) + kExpectedNodePaddingBytes;
+  static constexpr std::size_t kZipListTargetBytes =
+      TargetBlockBytes > kNodeEnvelopeBytes ? TargetBlockBytes - kNodeEnvelopeBytes : 1;
+
+  using Block = ZipList<Key, Value, kZipListTargetBytes>;
+  using Entry = typename Block::Entry;
 
   struct Node : public RefCountPolicy::Counter {
     Block block;
     NodePtr left;
     NodePtr right;
-    int height;
-    std::size_t size;
+    std::uint32_t size;
+    std::uint16_t height;
 
-    Node(Block node_block, NodePtr node_left, NodePtr node_right, int node_height,
-         std::size_t node_size)
+    Node(Block node_block, NodePtr node_left, NodePtr node_right,
+         std::uint32_t node_size, std::uint16_t node_height)
         : block(std::move(node_block)),
           left(std::move(node_left)),
           right(std::move(node_right)),
-          height(node_height),
-          size(node_size) {
+          size(node_size),
+          height(node_height) {
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
       ++live_node_count_;
 #endif
@@ -150,6 +160,18 @@ class ImmutableBlockTree {
 
   static std::size_t DebugLiveNodeCountForTest() { return Node::LiveNodeCountForTest(); }
 
+  static constexpr std::size_t DebugNodeBytesForTest() { return sizeof(Node); }
+
+  static constexpr std::size_t DebugZipListBytesForTest() { return sizeof(Block); }
+
+  static constexpr std::size_t DebugZipListTargetBytesForTest() {
+    return kZipListTargetBytes;
+  }
+
+  static constexpr std::size_t DebugNodeEnvelopeBytesForTest() {
+    return kNodeEnvelopeBytes;
+  }
+
   DebugStats DebugStatsForTest() const {
     DebugStats stats;
     CollectStats(root_, &stats);
@@ -181,9 +203,22 @@ class ImmutableBlockTree {
   static NodePtr MakeNode(Block block, NodePtr left, NodePtr right) {
     const std::size_t block_size = block.Count();
     const int height = 1 + std::max(Height(left), Height(right));
+    if (height > static_cast<int>(std::numeric_limits<std::uint16_t>::max())) {
+      throw std::length_error("ImmutableBlockTree node height exceeds uint16_t max");
+    }
+
+    const std::size_t left_size = Size(left);
+    const std::size_t right_size = Size(right);
+    constexpr std::size_t max_size = std::numeric_limits<std::uint32_t>::max();
+    if (block_size > max_size || left_size > max_size - block_size ||
+        right_size > max_size - block_size - left_size) {
+      throw std::length_error("ImmutableBlockTree node size exceeds uint32_t max");
+    }
+
     const std::size_t size = block_size + Size(left) + Size(right);
     return NodePtr::Adopt(
-        new Node(std::move(block), std::move(left), std::move(right), height, size));
+        new Node(std::move(block), std::move(left), std::move(right),
+                 static_cast<std::uint32_t>(size), static_cast<std::uint16_t>(height)));
   }
 
   static int BalanceFactor(const NodePtr& node) {

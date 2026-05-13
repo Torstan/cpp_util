@@ -402,6 +402,52 @@ void TestPackedStringBlockTreeMapBehavior() {
 #endif
 }
 
+void TestPackedBlockTreeNodeBudget() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using PackedString = immutable_container::PackedString;
+  using Block4096 = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 4096>;
+  using Block2048 = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 2048>;
+
+  Require(Block4096::DebugNodeBytesForTest() <= 4096,
+          "4096-byte packed block tree node fits target allocation size");
+  Require(Block2048::DebugNodeBytesForTest() <= 2048,
+          "2048-byte packed block tree node fits target allocation size");
+  Require(Block4096::DebugZipListBytesForTest() < 4096,
+          "4096-byte block tree passes reduced ZipList budget");
+  Require(Block2048::DebugZipListBytesForTest() < 2048,
+          "2048-byte block tree passes reduced ZipList budget");
+  Require(Block4096::DebugZipListTargetBytesForTest() < 4096,
+          "4096-byte block tree computes a reduced ZipList target");
+  Require(Block2048::DebugZipListTargetBytesForTest() < 2048,
+          "2048-byte block tree computes a reduced ZipList target");
+#endif
+}
+
+void TestPackedBlockTreeFindValuePointerStability() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 4096>;
+
+  Tree tree;
+  for (int i = 0; i < 100; ++i) {
+    auto next =
+        tree.Insert(Pbs("key_" + std::to_string(i)), Pbs("value_" + std::to_string(i)));
+    Require(next.has_value(), "packed block tree insert succeeds");
+    tree = *next;
+  }
+
+  const PackedString* first = tree.Find(Pbs("key_50"));
+  const PackedString* second = tree.Find(Pbs("key_50"));
+  Require(first != nullptr, "packed block tree Find hit");
+  Require(first == second, "packed block tree Find returns stable value pointer");
+  Require(*first == Pbs("value_50"), "packed block tree Find value matches");
+}
+
 void TestPackedStringBlockTreeSetBehavior() {
   using PackedString = immutable_container::PackedString;
   using UnitValue = immutable_container::UnitValue;
@@ -560,6 +606,8 @@ int main() {
     TestSharedNodeObservation();
     TestRandomizedMapModelMaintainsInvariants();
     TestPackedStringBlockTreeMapBehavior();
+    TestPackedBlockTreeNodeBudget();
+    TestPackedBlockTreeFindValuePointerStability();
     TestPackedStringBlockTreeSetBehavior();
     TestPackedStringBlockTreeManySplitBlocks();
     TestPackedStringBlockTreeUpdateCanSplitBlock();
