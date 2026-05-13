@@ -70,6 +70,24 @@ void TestEmptyAndFromSorted() {
           "ToVector preserves sorted entries");
 }
 
+void TestGenericAccessors() {
+  using ZipList = immutable_container::ZipList<int, std::string, 256>;
+  const auto block = ZipList::FromSortedEntries({
+      {1, "one"},
+      {3, "three"},
+      {5, "five"},
+  });
+
+  RequireEqual(block.FrontKey(), 1, "FrontKey returns first key");
+  RequireEqual(block.BackKey(), 5, "BackKey returns last key");
+  RequireEqual(block.KeyAt(1), 3, "KeyAt returns indexed key");
+  RequireEqual(block.ValueAt(1), std::string("three"), "ValueAt returns indexed value");
+  RequireEqual(*block.FindValue(3, std::less<int>()), std::string("three"),
+               "FindValue returns matching value");
+  Require(block.FindValue(4, std::less<int>()) == nullptr,
+          "FindValue returns nullptr for missing key");
+}
+
 void TestCopyWithInsertUpdateErase() {
   using ZipList = immutable_container::ZipList<int, std::string, 128>;
   const auto block = ZipList::FromSortedEntries({
@@ -156,6 +174,7 @@ void TestObjectLifetimeAndLargeEntry() {
 int main() {
   try {
     TestEmptyAndFromSorted();
+    TestGenericAccessors();
     TestCopyWithInsertUpdateErase();
     TestSplitAndMerge();
     TestObjectLifetimeAndLargeEntry();
