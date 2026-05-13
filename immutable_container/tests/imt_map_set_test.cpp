@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -10,6 +11,7 @@
 #include "immutable_container/immutable_block_tree.h"
 #include "immutable_container/imt_map.h"
 #include "immutable_container/imt_set.h"
+#include "immutable_container/unit_value.h"
 
 namespace {
 
@@ -24,6 +26,27 @@ void Require(bool condition, const std::string& message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+template <typename Set>
+void RequireStringSetBehavior(const std::string& label) {
+  Set set;
+  Require(set.Empty(), label + " starts empty");
+  const auto with_two = set.Insert("two");
+  Require(with_two.has_value(), label + " inserts missing key");
+  Require(!set.Contains("two"), label + " leaves old version unchanged");
+  Require(with_two->Contains("two"), label + " contains inserted key");
+  const auto duplicate = with_two->Insert("two");
+  Require(!duplicate.has_value(), label + " rejects duplicate insert");
+  const auto added = with_two->Add("one").Add("three").Add("two");
+  const std::vector<std::string> expected = {"one", "three", "two"};
+  std::vector<std::string> sorted_expected = expected;
+  std::sort(sorted_expected.begin(), sorted_expected.end());
+  Require(added.ToVector() == sorted_expected, label + " ToVector returns sorted keys");
+  const auto erased = added.Erase("two");
+  Require(erased.has_value(), label + " erases existing key");
+  Require(added.Contains("two"), label + " leaves pre-erase version unchanged");
+  Require(!erased->Contains("two"), label + " erase removes key in new version");
 }
 
 void TestImtMapEmptyAndStrictUpdates() {
@@ -148,6 +171,19 @@ void TestImtSetBehavior() {
   Require(!erased->Contains(2), "ImtSet Erase removes key in new version");
 }
 
+void TestImtSetStringBackends() {
+  using TreeSet = immutable_container::ImtSet<std::string>;
+  using BlockTree = immutable_container::ImmutableBlockTree<
+      std::string, immutable_container::UnitValue, std::less<std::string>,
+      immutable_container::NonAtomicRefCount, 512>;
+  using BlockSet =
+      immutable_container::ImtSet<std::string, std::less<std::string>,
+                                  immutable_container::NonAtomicRefCount, BlockTree>;
+
+  RequireStringSetBehavior<TreeSet>("tree-backed string ImtSet");
+  RequireStringSetBehavior<BlockSet>("block-tree-backed string ImtSet");
+}
+
 }  // namespace
 
 int main() {
@@ -156,6 +192,7 @@ int main() {
     TestImtMapSetAndOrdering();
     TestImtMapRandomWritesMatchStdMapAcrossTreeBackends();
     TestImtSetBehavior();
+    TestImtSetStringBackends();
     std::cout << "imt_map_set_test passed\n";
     return 0;
   } catch (const std::exception& e) {

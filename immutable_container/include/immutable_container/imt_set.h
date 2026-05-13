@@ -8,18 +8,16 @@
 #include <vector>
 
 #include "immutable_container/immutable_tree.h"
+#include "immutable_container/unit_value.h"
 
 namespace immutable_container {
 
 struct NonAtomicRefCount;
 
 template <typename Key, typename Comp = std::less<Key>,
-          typename RefCountPolicy = NonAtomicRefCount>
+          typename RefCountPolicy = NonAtomicRefCount,
+          typename Tree = ImmutableTree<Key, UnitValue, Comp, RefCountPolicy>>
 class ImtSet {
- private:
-  struct UnitValue {};
-  using Tree = ImmutableTree<Key, UnitValue, Comp, RefCountPolicy>;
-
  public:
   ImtSet() = default;
 
