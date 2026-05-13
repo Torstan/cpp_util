@@ -87,7 +87,7 @@ li { margin: 6px 0; }
 <h2>Metadata</h2>
 <div class="panel">
 <table class="metadata"><tbody>
-<tr><th>Generated</th><td>2026-05-13T09:12:39+08:00</td></tr>
+<tr><th>Generated</th><td>2026-05-13T09:24:45+08:00</td></tr>
 <tr><th>Input</th><td>build/immutable_tree_vs_block_tree_string.csv</td></tr>
 <tr><th>Benchmark Command</th><td>./build/bench_block_tree_string_report_jemalloc</td></tr>
 <tr><th>Jemalloc Path</th><td>../thirdparty/jemalloc</td></tr>
@@ -136,6 +136,15 @@ li { margin: 6px 0; }
 <li>sorted keys=64 values=256 size=100000: block_tree_4096 build 2454.2% slower than immutable_tree, hit 19.5% slower than immutable_tree, miss 1.9% slower than immutable_tree, to_vector 26.9% slower than immutable_tree, allocated 6.2% smaller than immutable_tree.</li>
 <li>sorted keys=64 values=1024 size=100000: block_tree_2048 build 744.8% slower than immutable_tree, hit 40.2% slower than immutable_tree, miss 5.6% faster than immutable_tree, to_vector 3.0% faster than immutable_tree, allocated 2.2% smaller than immutable_tree.</li>
 <li>sorted keys=64 values=1024 size=100000: block_tree_4096 build 1684.4% slower than immutable_tree, hit 0.7% faster than immutable_tree, miss 10.3% faster than immutable_tree, to_vector 22.7% faster than immutable_tree, allocated 2.2% smaller than immutable_tree.</li>
+</ul>
+</div>
+
+<h2>Interpretation Notes</h2>
+<div class="panel">
+<ul>
+<li>The string workload measures std::string containers, not inline byte arrays. For the requested 32/64-byte keys and 64/128/256/1024-byte values, string character buffers are heap allocated and dominate jemalloc allocated memory.</li>
+<li>ImmutableBlockTree reduces AVL node count and groups many string objects per node, but each entry still owns separate key/value character buffers. Memory savings are therefore most visible when payloads are small, and become small relative to payload size for 1024-byte values.</li>
+<li>Block structure fields are marked not applicable for ImmutableTree because it does not use zip-list blocks.</li>
 </ul>
 </div>
 

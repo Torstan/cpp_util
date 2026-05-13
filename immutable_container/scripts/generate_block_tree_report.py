@@ -671,6 +671,21 @@ def _observations_html(observations):
     return "<ul>\n" + "\n".join(items) + "\n</ul>"
 
 
+def interpretation_html():
+    items = [
+        "The string workload measures std::string containers, not inline byte arrays. "
+        "For the requested 32/64-byte keys and 64/128/256/1024-byte values, string "
+        "character buffers are heap allocated and dominate jemalloc allocated memory.",
+        "ImmutableBlockTree reduces AVL node count and groups many string objects per "
+        "node, but each entry still owns separate key/value character buffers. Memory "
+        "savings are therefore most visible when payloads are small, and become small "
+        "relative to payload size for 1024-byte values.",
+        "Block structure fields are marked not applicable for ImmutableTree because it "
+        "does not use zip-list blocks.",
+    ]
+    return "<ul>\n" + "\n".join(f"<li>{_html_escape(item)}</li>" for item in items) + "\n</ul>"
+
+
 def render_html(env, cases, args, input_label):
     title = "Immutable Tree vs Block Tree Benchmark Report"
     return f"""<!doctype html>
@@ -767,6 +782,11 @@ li {{ margin: 6px 0; }}
 <h2>Observations</h2>
 <div class="panel">
 {_observations_html(build_observations(cases))}
+</div>
+
+<h2>Interpretation Notes</h2>
+<div class="panel">
+{interpretation_html()}
 </div>
 
 <h2>Largest-Size Ratios</h2>
