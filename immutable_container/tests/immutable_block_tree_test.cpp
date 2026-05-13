@@ -391,7 +391,12 @@ void TestPackedStringBlockTreeMapBehavior() {
   Require(*three.Find(Pbs("c")) == Pbs("three"), "packed map set leaves old c");
   Require(*changed.Find(Pbs("c")) == Pbs("THREE"), "packed map set updates c");
   Require(changed.Contains(Pbs("a")), "packed map contains a");
-  Require(changed.ToVector()[0].first == Pbs("a"), "packed map ToVector sorted");
+  Require(changed.ToVector() == std::vector<std::pair<PackedString, PackedString>>({
+                                  {Pbs("a"), Pbs("one")},
+                                  {Pbs("b"), Pbs("TWO")},
+                                  {Pbs("c"), Pbs("THREE")},
+                              }),
+          "packed map ToVector sorted");
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   Require(changed.DebugValidateInvariantsForTest(), "packed map invariants");
 #endif
@@ -412,10 +417,23 @@ void TestPackedStringBlockTreeSetBehavior() {
   Require(tree.Contains(Pbs("a")), "packed set tree contains a");
   Require(tree.Contains(Pbs("b")), "packed set tree contains b");
   Require(tree.Contains(Pbs("c")), "packed set tree contains c");
+  RequireEqual(tree.Size(), std::size_t{3}, "packed set tree size");
+  Require(tree.ToVector() == std::vector<std::pair<PackedString, UnitValue>>({
+                                {Pbs("a"), UnitValue{}},
+                                {Pbs("b"), UnitValue{}},
+                                {Pbs("c"), UnitValue{}},
+                            }),
+          "packed set tree ToVector sorted");
   const auto erased = tree.Erase(Pbs("b"));
   Require(erased.has_value(), "packed set tree erase b");
   Require(!erased->Contains(Pbs("b")), "packed set tree erased b");
   Require(tree.Contains(Pbs("b")), "packed set tree old version remains");
+  RequireEqual(erased->Size(), std::size_t{2}, "packed set erased tree size");
+  Require(erased->ToVector() == std::vector<std::pair<PackedString, UnitValue>>({
+                                   {Pbs("a"), UnitValue{}},
+                                   {Pbs("c"), UnitValue{}},
+                               }),
+          "packed set erased ToVector sorted");
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   Require(tree.DebugValidateInvariantsForTest(), "packed set tree invariants");
 #endif
@@ -446,16 +464,26 @@ void TestPackedStringBlockTreeManySplitBlocks() {
 #endif
 
   const auto updated_key = PackedKey(40);
+  const Tree before_update = tree;
   const auto updated_value = RepeatedPackedString('U', 2000);
   tree = tree.Set(updated_key, updated_value);
   expected[updated_key] = updated_value;
+  Require(*before_update.Find(updated_key) != updated_value,
+          "packed many-split pre-update version keeps old value");
+  Require(*tree.Find(updated_key) == updated_value,
+          "packed many-split updated version stores new value");
 
   const auto inserted_key = PackedKey(41);
+  const Tree before_insert = tree;
   const auto inserted_value = RepeatedPackedString('I', 2000);
   auto inserted = tree.Insert(inserted_key, inserted_value);
   Require(inserted.has_value(), "packed many-split oversized middle insert succeeds");
   tree = *inserted;
   expected.emplace(inserted_key, inserted_value);
+  Require(!before_insert.Contains(inserted_key),
+          "packed many-split pre-insert version misses new key");
+  Require(*tree.Find(inserted_key) == inserted_value,
+          "packed many-split inserted version stores new key");
 
   std::vector<std::pair<PackedString, PackedString>> expected_vector;
   expected_vector.reserve(expected.size());
