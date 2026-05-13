@@ -43,10 +43,14 @@ void RequirePackedMapBehavior(const std::string& label) {
   Require(!duplicate.has_value(), label + " rejects duplicate insert");
   const auto two = one->Set(Pms("k1"), Pms("v1"));
   const auto three = two.Set(Pms("k3"), Pms("v3"));
-  const auto changed = three.Set(Pms("k2"), Pms("V2"));
+  const auto updated = three.Update(Pms("k2"), Pms("V2"));
+  Require(updated.has_value(), label + " updates existing k2");
+  const auto changed = updated->Set(Pms("k3"), Pms("V3"));
 
   Require(*three.Find(Pms("k2")) == Pms("v2"), label + " old version keeps k2");
   Require(*changed.Find(Pms("k2")) == Pms("V2"), label + " new version updates k2");
+  Require(*three.Find(Pms("k3")) == Pms("v3"), label + " old version keeps k3");
+  Require(*changed.Find(Pms("k3")) == Pms("V3"), label + " new version sets k3");
   Require(changed.Contains(Pms("k1")), label + " contains k1");
   Require(!changed.Contains(Pms("missing")), label + " misses absent key");
   Require(changed.ToVector() ==
@@ -54,7 +58,7 @@ void RequirePackedMapBehavior(const std::string& label) {
                                     immutable_container::PackedString>>({
                   {Pms("k1"), Pms("v1")},
                   {Pms("k2"), Pms("V2")},
-                  {Pms("k3"), Pms("v3")},
+                  {Pms("k3"), Pms("V3")},
               }),
           label + " ToVector sorted");
 
@@ -78,6 +82,8 @@ void RequirePackedSetBehavior(const std::string& label) {
   Require(added.Contains(Pms("k2")), label + " contains k2");
   Require(added.Contains(Pms("k3")), label + " contains k3");
   RequireEqual(added.Size(), std::size_t{3}, label + " duplicate Add is idempotent");
+  Require(one->ToVector() == std::vector<immutable_container::PackedString>({Pms("k2")}),
+          label + " chained Add leaves old version unchanged");
   const auto erased = added.Erase(Pms("k2"));
   Require(erased.has_value(), label + " erases k2");
   Require(!erased->Contains(Pms("k2")), label + " erased version misses k2");
