@@ -24,6 +24,16 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+template <typename Func>
+void RequireThrowsLogic(Func func, const std::string& message) {
+  try {
+    func();
+  } catch (const std::logic_error&) {
+    return;
+  }
+  throw std::runtime_error(message);
+}
+
 struct CountingValue {
   static int live_count;
 
@@ -242,6 +252,15 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   Require(*oversized.FindValue(Ps("huge"), std::less<PackedString>()) ==
               RepeatedPacked('x', 2000),
           "packed map finds oversized external value");
+  Require(!oversized.CanInsert(Ps("small"), Ps("value")),
+          "packed map refuses to add normal entry beside oversized record");
+  Require(!left.CanInsert(Ps("oversized"), RepeatedPacked('y', 2000)),
+          "packed map refuses oversized entry in non-empty block");
+  Require(!ZipList::CanMerge(oversized, left),
+          "packed map refuses to merge oversized record with other entries");
+  RequireThrowsLogic(
+      [&] { left.WithInserted(1, Ps("oversized"), RepeatedPacked('z', 2000)); },
+      "packed map direct insert rejects oversized entry in non-empty block");
 
   ZipList copied = oversized;
   Require(*copied.FindValue(Ps("huge"), std::less<PackedString>()) ==

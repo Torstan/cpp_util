@@ -70,6 +70,8 @@ class ZipList {
 
   bool CanInsert(const Key&, const Value&) const { return !Full(); }
 
+  bool CanUpdate(std::size_t index, const Value&) const { return index < count_; }
+
   const Entry& operator[](std::size_t index) const { return *EntryAt(index); }
 
   const Entry& Front() const { return (*this)[0]; }
@@ -158,6 +160,31 @@ class ZipList {
       }
     }
     return result;
+  }
+
+  std::pair<ZipList, ZipList> SplitWithUpdated(std::size_t index,
+                                               const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList split update index out of range");
+    }
+    if (count_ < 2) {
+      throw std::logic_error("ZipList update cannot split a single entry");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_);
+    for (std::size_t i = 0; i < count_; ++i) {
+      if (i == index) {
+        entries.push_back({(*this)[i].first, value});
+      } else {
+        entries.push_back((*this)[i]);
+      }
+    }
+
+    const std::size_t split = entries.size() / 2;
+    std::vector<Entry> left_entries(entries.begin(), entries.begin() + split);
+    std::vector<Entry> right_entries(entries.begin() + split, entries.end());
+    return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
   }
 
   ZipList WithErased(std::size_t index) const {
@@ -372,8 +399,26 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     if (count_ == DefaultCapacity()) {
       return false;
     }
-    const std::size_t inline_bytes = InlinePayloadSize(key, value);
-    return inline_bytes == 0 || inline_bytes <= RemainingPayload();
+    FitSummary summary;
+    for (std::size_t i = 0; i < count_; ++i) {
+      if (!AccumulateEntry(KeyAt(i), ValueAt(i), &summary)) {
+        return false;
+      }
+    }
+    return AccumulateEntry(key, value, &summary);
+  }
+
+  bool CanUpdate(std::size_t index, const Value& value) const {
+    if (index >= count_) {
+      return false;
+    }
+    FitSummary summary;
+    for (std::size_t i = 0; i < count_; ++i) {
+      if (!AccumulateEntry(KeyAt(i), i == index ? value : ValueAt(i), &summary)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Entry operator[](std::size_t index) const { return {KeyAt(index), ValueAt(index)}; }
@@ -450,12 +495,39 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     if (index >= count_) {
       throw std::out_of_range("ZipList update index out of range");
     }
+    if (!CanUpdate(index, value)) {
+      throw std::logic_error("ZipList payload capacity exceeded");
+    }
 
     ZipList result;
     for (std::size_t i = 0; i < count_; ++i) {
       result.ConstructBack(KeyAt(i), i == index ? value : ValueAt(i));
     }
     return result;
+  }
+
+  std::pair<ZipList, ZipList> SplitWithUpdated(std::size_t index,
+                                               const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList split update index out of range");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_);
+    for (std::size_t i = 0; i < count_; ++i) {
+      entries.push_back({KeyAt(i), i == index ? value : ValueAt(i)});
+    }
+
+    for (std::size_t split = 1; split < entries.size(); ++split) {
+      if (EntriesFit(entries.begin(), entries.begin() + split) &&
+          EntriesFit(entries.begin() + split, entries.end())) {
+        std::vector<Entry> left_entries(entries.begin(), entries.begin() + split);
+        std::vector<Entry> right_entries(entries.begin() + split, entries.end());
+        return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
+      }
+    }
+
+    throw std::logic_error("ZipList split update entries exceed packed capacity");
   }
 
   ZipList WithErased(std::size_t index) const {
@@ -501,19 +573,14 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   }
 
   static bool CanMerge(const ZipList& left, const ZipList& right) {
-    if (left.Count() + right.Count() > DefaultCapacity()) {
-      return false;
-    }
-    std::size_t inline_bytes = 0;
+    FitSummary summary;
     for (std::size_t i = 0; i < left.Count(); ++i) {
-      inline_bytes += InlinePayloadSize(left.KeyAt(i), left.ValueAt(i));
-      if (inline_bytes > kPayloadBytes) {
+      if (!AccumulateEntry(left.KeyAt(i), left.ValueAt(i), &summary)) {
         return false;
       }
     }
     for (std::size_t i = 0; i < right.Count(); ++i) {
-      inline_bytes += InlinePayloadSize(right.KeyAt(i), right.ValueAt(i));
-      if (inline_bytes > kPayloadBytes) {
+      if (!AccumulateEntry(right.KeyAt(i), right.ValueAt(i), &summary)) {
         return false;
       }
     }
@@ -597,21 +664,42 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return EntryPayloadSize(key, value) > kPayloadBytes;
   }
 
-  static std::size_t InlinePayloadSize(const Key& key, const Value& value) {
-    return UsesExternalPayload(key, value) ? 0 : EntryPayloadSize(key, value);
+  struct FitSummary {
+    std::size_t count = 0;
+    std::size_t inline_bytes = 0;
+    bool has_external_entry = false;
+  };
+
+  static bool SummaryFits(const FitSummary& summary) {
+    if (summary.count > DefaultCapacity()) {
+      return false;
+    }
+    if (summary.has_external_entry) {
+      return summary.count == 1;
+    }
+    return summary.inline_bytes <= kPayloadBytes;
+  }
+
+  static bool AccumulateEntry(const Key& key, const Value& value,
+                              FitSummary* summary) {
+    ++summary->count;
+    if (UsesExternalPayload(key, value)) {
+      summary->has_external_entry = true;
+    } else {
+      const std::size_t entry_bytes = EntryPayloadSize(key, value);
+      if (entry_bytes > kPayloadBytes - summary->inline_bytes) {
+        return false;
+      }
+      summary->inline_bytes += entry_bytes;
+    }
+    return SummaryFits(*summary);
   }
 
   template <typename Iterator>
   static bool EntriesFit(Iterator first, Iterator last) {
-    std::size_t count = 0;
-    std::size_t inline_bytes = 0;
+    FitSummary summary;
     for (Iterator current = first; current != last; ++current) {
-      ++count;
-      if (count > DefaultCapacity()) {
-        return false;
-      }
-      inline_bytes += InlinePayloadSize(current->first, current->second);
-      if (inline_bytes > kPayloadBytes) {
+      if (!AccumulateEntry(current->first, current->second, &summary)) {
         return false;
       }
     }
