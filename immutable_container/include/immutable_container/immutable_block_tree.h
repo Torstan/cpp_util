@@ -306,7 +306,7 @@ class ImmutableBlockTree {
 
   NodePtr InsertInNodeBlock(const NodePtr& node, std::size_t index, const Key& key,
                             const Value& value) const {
-    if (!node->block.Full()) {
+    if (!node->block.Full() && node->block.CanInsert(key, value)) {
       return MakeBalanced(node->block.WithInserted(index, key, value), node->left,
                           node->right);
     }
