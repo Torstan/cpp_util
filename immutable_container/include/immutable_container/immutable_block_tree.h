@@ -299,11 +299,6 @@ class ImmutableBlockTree {
     return JoinNode(std::move(block), std::move(left), std::move(right));
   }
 
-  NodePtr BuildSplitNode(std::pair<Block, Block> split, NodePtr left, NodePtr right) const {
-    NodePtr split_right = NormalizeNode(std::move(split.second), nullptr, std::move(right));
-    return NormalizeNode(std::move(split.first), std::move(left), std::move(split_right));
-  }
-
   NodePtr BuildSplitNodes(std::vector<Block> blocks, NodePtr left, NodePtr right) const {
     NodePtr result = std::move(right);
     for (std::size_t remaining = blocks.size(); remaining > 0; --remaining) {
