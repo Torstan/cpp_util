@@ -241,13 +241,13 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   using ZipList = immutable_container::ZipList<PackedString, PackedString, 1024>;
 
   const auto left = ZipList::FromSortedEntries({
-      {RepeatedPacked('a', 320), RepeatedPacked('b', 180)},
+      {RepeatedPacked('a', 380), RepeatedPacked('b', 180)},
   });
   const auto right = ZipList::FromSortedEntries({
-      {RepeatedPacked('c', 320), RepeatedPacked('d', 180)},
+      {RepeatedPacked('c', 380), RepeatedPacked('d', 180)},
   });
 
-  Require(!left.CanInsert(RepeatedPacked('e', 320), RepeatedPacked('f', 180)),
+  Require(!left.CanInsert(RepeatedPacked('e', 380), RepeatedPacked('f', 180)),
           "packed map refuses normal entry when payload budget is exhausted");
   Require(!ZipList::CanMerge(left, right),
           "packed map CanMerge rejects over-budget combined payload");
@@ -378,13 +378,13 @@ void TestPackedStringSetPayloadBudgetAndLifetime() {
           "packed set capacity is higher than packed map capacity");
 
   const auto left = ZipList::FromSortedEntries({
-      {RepeatedPacked('a', 80), UnitValue{}},
+      {RepeatedPacked('a', 90), UnitValue{}},
   });
   const auto right = ZipList::FromSortedEntries({
-      {RepeatedPacked('b', 80), UnitValue{}},
+      {RepeatedPacked('b', 90), UnitValue{}},
   });
 
-  Require(!left.CanInsert(RepeatedPacked('c', 80), UnitValue{}),
+  Require(!left.CanInsert(RepeatedPacked('c', 90), UnitValue{}),
           "packed set refuses normal key when payload budget is exhausted");
   Require(!ZipList::CanMerge(left, right),
           "packed set CanMerge rejects over-budget combined payload");
@@ -434,11 +434,11 @@ void TestPackedStringSetPayloadBudgetAndLifetime() {
   Require(merged.BackKey() == Ps("b"), "packed set merged ordering");
 
   ZipList copied = left;
-  Require(copied.FrontKey() == RepeatedPacked('a', 80),
+  Require(copied.FrontKey() == RepeatedPacked('a', 90),
           "packed set copy keeps borrowed key storage valid");
 
   ZipList moved = std::move(copied);
-  Require(moved.FrontKey() == RepeatedPacked('a', 80),
+  Require(moved.FrontKey() == RepeatedPacked('a', 90),
           "packed set move keeps borrowed key storage valid");
 
   const auto empty = ZipList::FromSortedEntries({
