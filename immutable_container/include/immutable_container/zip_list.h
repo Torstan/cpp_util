@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "immutable_container/packed_string.h"
+#include "immutable_container/unit_value.h"
 
 namespace immutable_container {
 
@@ -856,6 +857,472 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   std::size_t count_ = 0;
   std::size_t payload_used_ = 0;
   std::deque<PackedString> external_payloads_;
+};
+
+template <std::size_t TargetBytes>
+class ZipList<PackedString, UnitValue, TargetBytes> {
+ public:
+  using Key = PackedString;
+  using Value = UnitValue;
+  using Entry = std::pair<Key, Value>;
+
+  ZipList() = default;
+
+  ZipList(const ZipList& other) { CopyFrom(other); }
+
+  ZipList(ZipList&& other) { MoveFrom(&other); }
+
+  ZipList& operator=(const ZipList& other) {
+    if (this == &other) {
+      return *this;
+    }
+    Clear();
+    CopyFrom(other);
+    return *this;
+  }
+
+  ZipList& operator=(ZipList&& other) {
+    if (this == &other) {
+      return *this;
+    }
+    Clear();
+    MoveFrom(&other);
+    return *this;
+  }
+
+  ~ZipList() { Clear(); }
+
+  static constexpr std::size_t DefaultCapacity() { return kCapacity; }
+
+  static constexpr bool UsesPackedStorageForTest() { return true; }
+
+  static ZipList FromSortedEntries(const std::vector<Entry>& entries) {
+    if (entries.size() > DefaultCapacity()) {
+      throw std::invalid_argument("ZipList entries exceed capacity");
+    }
+
+    ZipList result;
+    for (const auto& entry : entries) {
+      result.ConstructBack(entry.first);
+    }
+    return result;
+  }
+
+  std::size_t Count() const { return count_; }
+
+  std::size_t Capacity() const { return DefaultCapacity(); }
+
+  bool Empty() const { return count_ == 0; }
+
+  bool Full() const { return count_ == DefaultCapacity() || RemainingPayload() == 0; }
+
+  bool CanInsert(const Key& key, const Value&) const {
+    if (count_ == DefaultCapacity()) {
+      return false;
+    }
+    FitSummary summary;
+    for (std::size_t i = 0; i < count_; ++i) {
+      if (!AccumulateKey(KeyAt(i), &summary)) {
+        return false;
+      }
+    }
+    return AccumulateKey(key, &summary);
+  }
+
+  bool CanUpdate(std::size_t index, const Value&) const { return index < count_; }
+
+  Entry operator[](std::size_t index) const { return {KeyAt(index), StaticValue()}; }
+
+  Entry Front() const { return (*this)[0]; }
+
+  Entry Back() const { return (*this)[count_ - 1]; }
+
+  const Key& FrontKey() const { return KeyAt(0); }
+
+  const Key& BackKey() const { return KeyAt(count_ - 1); }
+
+  const Key& KeyAt(std::size_t index) const { return *KeySlot(index); }
+
+  const Value& ValueAt(std::size_t index) const {
+    (void)index;
+    return StaticValue();
+  }
+
+  template <typename Comp>
+  std::size_t LowerBound(const Key& key, const Comp& comp) const {
+    std::size_t first = 0;
+    std::size_t length = count_;
+    while (length > 0) {
+      const std::size_t half = length / 2;
+      const std::size_t middle = first + half;
+      if (comp(KeyAt(middle), key)) {
+        first = middle + 1;
+        length -= half + 1;
+      } else {
+        length = half;
+      }
+    }
+    return first;
+  }
+
+  template <typename Comp>
+  const Value* FindValue(const Key& key, const Comp& comp) const {
+    const std::size_t index = LowerBound(key, comp);
+    if (index == count_) {
+      return nullptr;
+    }
+    if (comp(key, KeyAt(index)) || comp(KeyAt(index), key)) {
+      return nullptr;
+    }
+    return &StaticValue();
+  }
+
+  template <typename Comp>
+  const Value* Find(const Key& key, const Comp& comp) const {
+    return FindValue(key, comp);
+  }
+
+  ZipList WithInserted(std::size_t index, const Key& key, const Value& value) const {
+    if (Full()) {
+      throw std::logic_error("ZipList is full");
+    }
+    if (!CanInsert(key, value)) {
+      throw std::logic_error("ZipList payload capacity exceeded");
+    }
+    if (index > count_) {
+      throw std::out_of_range("ZipList insert index out of range");
+    }
+
+    ZipList result;
+    for (std::size_t i = 0; i < index; ++i) {
+      result.ConstructBack(KeyAt(i));
+    }
+    result.ConstructBack(key);
+    for (std::size_t i = index; i < count_; ++i) {
+      result.ConstructBack(KeyAt(i));
+    }
+    return result;
+  }
+
+  ZipList WithUpdated(std::size_t index, const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList update index out of range");
+    }
+    if (!CanUpdate(index, value)) {
+      throw std::logic_error("ZipList payload capacity exceeded");
+    }
+
+    ZipList result;
+    for (std::size_t i = 0; i < count_; ++i) {
+      result.ConstructBack(KeyAt(i));
+    }
+    return result;
+  }
+
+  std::pair<ZipList, ZipList> SplitWithUpdated(std::size_t index,
+                                               const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList split update index out of range");
+    }
+    (void)value;
+
+    std::vector<Entry> entries;
+    entries.reserve(count_);
+    AppendTo(&entries);
+
+    for (std::size_t split = 1; split < entries.size(); ++split) {
+      if (EntriesFit(entries.begin(), entries.begin() + split) &&
+          EntriesFit(entries.begin() + split, entries.end())) {
+        std::vector<Entry> left_entries(entries.begin(), entries.begin() + split);
+        std::vector<Entry> right_entries(entries.begin() + split, entries.end());
+        return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
+      }
+    }
+
+    throw std::logic_error("ZipList split update entries exceed packed capacity");
+  }
+
+  std::vector<ZipList> SplitWithUpdatedBlocks(std::size_t index,
+                                              const Value& value) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList split update index out of range");
+    }
+    (void)value;
+
+    std::vector<Entry> entries;
+    entries.reserve(count_);
+    AppendTo(&entries);
+    return PackEntriesIntoBlocks(entries);
+  }
+
+  ZipList WithErased(std::size_t index) const {
+    if (index >= count_) {
+      throw std::out_of_range("ZipList erase index out of range");
+    }
+
+    ZipList result;
+    for (std::size_t i = 0; i < count_; ++i) {
+      if (i != index) {
+        result.ConstructBack(KeyAt(i));
+      }
+    }
+    return result;
+  }
+
+  std::pair<ZipList, ZipList> SplitWithInserted(std::size_t index, const Key& key,
+                                                const Value& value) const {
+    if (index > count_) {
+      throw std::out_of_range("ZipList split insert index out of range");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_ + 1);
+    for (std::size_t i = 0; i < index; ++i) {
+      entries.push_back({KeyAt(i), StaticValue()});
+    }
+    entries.push_back({key, value});
+    for (std::size_t i = index; i < count_; ++i) {
+      entries.push_back({KeyAt(i), StaticValue()});
+    }
+
+    for (std::size_t split = 1; split < entries.size(); ++split) {
+      if (EntriesFit(entries.begin(), entries.begin() + split) &&
+          EntriesFit(entries.begin() + split, entries.end())) {
+        std::vector<Entry> left_entries(entries.begin(), entries.begin() + split);
+        std::vector<Entry> right_entries(entries.begin() + split, entries.end());
+        return {FromSortedEntries(left_entries), FromSortedEntries(right_entries)};
+      }
+    }
+
+    throw std::logic_error("ZipList split entries exceed packed capacity");
+  }
+
+  std::vector<ZipList> SplitWithInsertedBlocks(std::size_t index, const Key& key,
+                                               const Value& value) const {
+    if (index > count_) {
+      throw std::out_of_range("ZipList split insert index out of range");
+    }
+
+    std::vector<Entry> entries;
+    entries.reserve(count_ + 1);
+    for (std::size_t i = 0; i < index; ++i) {
+      entries.push_back({KeyAt(i), StaticValue()});
+    }
+    entries.push_back({key, value});
+    for (std::size_t i = index; i < count_; ++i) {
+      entries.push_back({KeyAt(i), StaticValue()});
+    }
+    return PackEntriesIntoBlocks(entries);
+  }
+
+  static bool CanMerge(const ZipList& left, const ZipList& right) {
+    FitSummary summary;
+    for (std::size_t i = 0; i < left.Count(); ++i) {
+      if (!AccumulateKey(left.KeyAt(i), &summary)) {
+        return false;
+      }
+    }
+    for (std::size_t i = 0; i < right.Count(); ++i) {
+      if (!AccumulateKey(right.KeyAt(i), &summary)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static ZipList Merged(const ZipList& left, const ZipList& right) {
+    if (!CanMerge(left, right)) {
+      throw std::logic_error("ZipList merged entries exceed capacity");
+    }
+
+    ZipList result;
+    for (std::size_t i = 0; i < left.Count(); ++i) {
+      result.ConstructBack(left.KeyAt(i));
+    }
+    for (std::size_t i = 0; i < right.Count(); ++i) {
+      result.ConstructBack(right.KeyAt(i));
+    }
+    return result;
+  }
+
+  std::vector<Entry> ToVector() const {
+    std::vector<Entry> result;
+    result.reserve(count_);
+    AppendTo(&result);
+    return result;
+  }
+
+  void AppendTo(std::vector<Entry>* output) const {
+    for (std::size_t i = 0; i < count_; ++i) {
+      output->push_back({KeyAt(i), StaticValue()});
+    }
+  }
+
+ private:
+  using KeyStorage = typename std::aligned_storage<sizeof(Key), alignof(Key)>::type;
+
+  static constexpr std::size_t kEntrySlotBytes = sizeof(KeyStorage);
+  static constexpr std::size_t kEstimatedEntryBytes = 64;
+  static constexpr std::size_t kFixedBytes = sizeof(std::size_t) * 2;
+  static constexpr std::size_t kUsableBytes =
+      TargetBytes > kFixedBytes ? TargetBytes - kFixedBytes : 1;
+
+  static constexpr std::size_t ComputeCapacity() {
+    const std::size_t raw = TargetBytes / kEstimatedEntryBytes;
+    return raw == 0 ? 1 : raw;
+  }
+
+  static constexpr std::size_t ComputePayloadBytes() {
+    const std::size_t slot_bytes = ComputeCapacity() * kEntrySlotBytes;
+    return kUsableBytes > slot_bytes ? kUsableBytes - slot_bytes : 1;
+  }
+
+  static constexpr std::size_t kCapacity = ComputeCapacity();
+  static constexpr std::size_t kPayloadBytes = ComputePayloadBytes();
+
+  Key* KeySlot(std::size_t index) {
+    return reinterpret_cast<Key*>(&key_storage_[index]);
+  }
+
+  const Key* KeySlot(std::size_t index) const {
+    return reinterpret_cast<const Key*>(&key_storage_[index]);
+  }
+
+  std::size_t RemainingPayload() const { return kPayloadBytes - payload_used_; }
+
+  static const Value& StaticValue() {
+    static const Value value{};
+    return value;
+  }
+
+  static bool UsesExternalPayload(const Key& key) { return key.Size() > kPayloadBytes; }
+
+  struct FitSummary {
+    std::size_t count = 0;
+    std::size_t inline_bytes = 0;
+    bool has_external_entry = false;
+  };
+
+  static bool SummaryFits(const FitSummary& summary) {
+    if (summary.count > DefaultCapacity()) {
+      return false;
+    }
+    if (summary.has_external_entry) {
+      return summary.count == 1;
+    }
+    return summary.inline_bytes <= kPayloadBytes;
+  }
+
+  static bool AccumulateKey(const Key& key, FitSummary* summary) {
+    ++summary->count;
+    if (UsesExternalPayload(key)) {
+      summary->has_external_entry = true;
+    } else {
+      const std::size_t key_bytes = key.Size();
+      if (key_bytes > kPayloadBytes - summary->inline_bytes) {
+        return false;
+      }
+      summary->inline_bytes += key_bytes;
+    }
+    return SummaryFits(*summary);
+  }
+
+  template <typename Iterator>
+  static bool EntriesFit(Iterator first, Iterator last) {
+    FitSummary summary;
+    for (Iterator current = first; current != last; ++current) {
+      if (!AccumulateKey(current->first, &summary)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static std::vector<ZipList> PackEntriesIntoBlocks(const std::vector<Entry>& entries) {
+    std::vector<ZipList> blocks;
+    std::size_t begin = 0;
+    while (begin < entries.size()) {
+      std::size_t end = begin + 1;
+      if (!EntriesFit(entries.begin() + begin, entries.begin() + end)) {
+        throw std::logic_error("ZipList single entry exceeds packed capacity");
+      }
+      while (end < entries.size() &&
+             EntriesFit(entries.begin() + begin, entries.begin() + end + 1)) {
+        ++end;
+      }
+      std::vector<Entry> block_entries(entries.begin() + begin, entries.begin() + end);
+      blocks.push_back(FromSortedEntries(block_entries));
+      begin = end;
+    }
+    return blocks;
+  }
+
+  std::string_view StoreBytes(const PackedString& text) {
+    if (text.Size() > RemainingPayload()) {
+      throw std::logic_error("ZipList payload capacity exceeded");
+    }
+
+    const std::size_t offset = payload_used_;
+    if (text.Size() != 0) {
+      std::memcpy(payload_ + offset, text.Data(), text.Size());
+    }
+    payload_used_ += text.Size();
+    return std::string_view(payload_ + offset, text.Size());
+  }
+
+  void ConstructBack(const Key& key) {
+    if (count_ == DefaultCapacity()) {
+      throw std::logic_error("ZipList entries exceed capacity");
+    }
+    if (!CanInsert(key, StaticValue())) {
+      throw std::logic_error("ZipList payload capacity exceeded");
+    }
+
+    if (UsesExternalPayload(key)) {
+      new (KeySlot(count_)) Key(key);
+    } else {
+      const std::string_view key_view = StoreBytes(key);
+      Key key_ref = Key::Borrowed(key_view.data(), key_view.size());
+      new (KeySlot(count_)) Key(std::move(key_ref));
+    }
+    ++count_;
+  }
+
+  void CopyFrom(const ZipList& other) {
+    try {
+      for (std::size_t i = 0; i < other.count_; ++i) {
+        ConstructBack(other.KeyAt(i));
+      }
+    } catch (...) {
+      Clear();
+      throw;
+    }
+  }
+
+  void MoveFrom(ZipList* other) {
+    try {
+      for (std::size_t i = 0; i < other->count_; ++i) {
+        ConstructBack(other->KeyAt(i));
+      }
+    } catch (...) {
+      Clear();
+      throw;
+    }
+    other->Clear();
+  }
+
+  void Clear() noexcept {
+    while (count_ > 0) {
+      --count_;
+      KeySlot(count_)->~Key();
+    }
+    payload_used_ = 0;
+  }
+
+  KeyStorage key_storage_[kCapacity];
+  char payload_[kPayloadBytes] = {};
+  std::size_t count_ = 0;
+  std::size_t payload_used_ = 0;
 };
 
 }  // namespace immutable_container
