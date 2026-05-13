@@ -241,13 +241,13 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   using ZipList = immutable_container::ZipList<PackedString, PackedString, 1024>;
 
   const auto left = ZipList::FromSortedEntries({
-      {RepeatedPacked('a', 380), RepeatedPacked('b', 180)},
+      {RepeatedPacked('a', 390), RepeatedPacked('b', 180)},
   });
   const auto right = ZipList::FromSortedEntries({
-      {RepeatedPacked('c', 380), RepeatedPacked('d', 180)},
+      {RepeatedPacked('c', 390), RepeatedPacked('d', 180)},
   });
 
-  Require(!left.CanInsert(RepeatedPacked('e', 380), RepeatedPacked('f', 180)),
+  Require(!left.CanInsert(RepeatedPacked('e', 390), RepeatedPacked('f', 180)),
           "packed map refuses normal entry when payload budget is exhausted");
   Require(!ZipList::CanMerge(left, right),
           "packed map CanMerge rejects over-budget combined payload");
@@ -326,6 +326,64 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
   });
   Require(empty.FrontKey() == Ps(""), "packed map stores empty key");
   Require(empty.ValueAt(0) == Ps(""), "packed map stores empty value");
+}
+
+void TestPackedMapZipListMetadataBudget() {
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 4096>;
+
+  RequireEqual(ZipList::DebugKeyRefBytesForTest(), std::size_t{4},
+               "packed map key ref is 4 bytes");
+  Require(ZipList::DebugCountFieldBytesForTest() <= 2,
+          "packed map count field is at most uint16_t");
+  Require(ZipList::DebugPayloadUsedFieldBytesForTest() <= 2,
+          "packed map payload_used field is at most uint16_t");
+  Require(!ZipList::DebugHasEagerExternalKeyVectorForTest(),
+          "packed map does not store eager external-key vector object");
+#endif
+}
+
+void TestPackedMapZipListCompactKeyRefsAndStableValues() {
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 4096>;
+
+  ZipList block = ZipList::FromSortedEntries({
+      {RepeatedPacked('a', 32), RepeatedPacked('x', 64)},
+      {RepeatedPacked('b', 32), RepeatedPacked('y', 64)},
+      {RepeatedPacked('c', 32), RepeatedPacked('z', 64)},
+  });
+
+  const PackedString* value =
+      block.FindValue(RepeatedPacked('b', 32), std::less<PackedString>());
+  Require(value != nullptr, "compact packed map finds key");
+  Require(value == block.FindValue(RepeatedPacked('b', 32), std::less<PackedString>()),
+          "compact packed map FindValue pointer is stable");
+  Require(*value == RepeatedPacked('y', 64), "compact packed map value matches");
+
+  const auto external_key_block = ZipList::FromSortedEntries({
+      {RepeatedPacked('q', 8192), Ps("large-key-value")},
+  });
+  Require(external_key_block.FrontKey() == RepeatedPacked('q', 8192),
+          "compact packed map external key remains readable");
+  Require(*external_key_block.FindValue(RepeatedPacked('q', 8192),
+                                        std::less<PackedString>()) ==
+              Ps("large-key-value"),
+          "compact packed map external key finds value");
+
+  ZipList copied = external_key_block;
+  Require(copied.FrontKey() == RepeatedPacked('q', 8192),
+          "compact packed map copy keeps external key readable");
+  Require(*copied.FindValue(RepeatedPacked('q', 8192), std::less<PackedString>()) ==
+              Ps("large-key-value"),
+          "compact packed map copy finds external key value");
+
+  ZipList moved = std::move(copied);
+  Require(moved.FrontKey() == RepeatedPacked('q', 8192),
+          "compact packed map move keeps external key readable");
+  Require(*moved.FindValue(RepeatedPacked('q', 8192), std::less<PackedString>()) ==
+              Ps("large-key-value"),
+          "compact packed map move finds external key value");
 }
 
 void TestPackedStringSetZipList() {
@@ -460,6 +518,8 @@ int main() {
     TestObjectLifetimeAndLargeEntry();
     TestPackedStringMapZipList();
     TestPackedStringMapPayloadBudgetAndLifetime();
+    TestPackedMapZipListMetadataBudget();
+    TestPackedMapZipListCompactKeyRefsAndStableValues();
     TestPackedStringSetZipList();
     TestPackedStringSetPayloadBudgetAndLifetime();
     std::cout << "zip_list_test passed\n";
