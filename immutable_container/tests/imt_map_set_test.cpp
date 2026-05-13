@@ -5,12 +5,14 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "immutable_container/immutable_block_tree.h"
 #include "immutable_container/imt_map.h"
 #include "immutable_container/imt_set.h"
+#include "immutable_container/packed_string.h"
 #include "immutable_container/unit_value.h"
 
 namespace {
@@ -26,6 +28,53 @@ void Require(bool condition, const std::string& message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+immutable_container::PackedString Pms(std::string_view text) {
+  return immutable_container::PackedString(text);
+}
+
+template <typename Map>
+void RequirePackedMapBehavior(const std::string& label) {
+  Map map;
+  const auto one = map.Insert(Pms("k2"), Pms("v2"));
+  Require(one.has_value(), label + " inserts k2");
+  const auto duplicate = one->Insert(Pms("k2"), Pms("duplicate"));
+  Require(!duplicate.has_value(), label + " rejects duplicate insert");
+  const auto two = one->Set(Pms("k1"), Pms("v1"));
+  const auto three = two.Set(Pms("k3"), Pms("v3"));
+  const auto changed = three.Set(Pms("k2"), Pms("V2"));
+
+  Require(*three.Find(Pms("k2")) == Pms("v2"), label + " old version keeps k2");
+  Require(*changed.Find(Pms("k2")) == Pms("V2"), label + " new version updates k2");
+  Require(changed.Contains(Pms("k1")), label + " contains k1");
+  Require(!changed.Contains(Pms("missing")), label + " misses absent key");
+  Require(changed.ToVector()[0].first == Pms("k1"), label + " ToVector sorted");
+
+  const auto missing_update = changed.Update(Pms("missing"), Pms("value"));
+  Require(!missing_update.has_value(), label + " rejects missing update");
+  const auto erased = changed.Erase(Pms("k2"));
+  Require(erased.has_value(), label + " erases k2");
+  Require(!erased->Contains(Pms("k2")), label + " erased version misses k2");
+  Require(changed.Contains(Pms("k2")), label + " old version keeps erased k2");
+}
+
+template <typename Set>
+void RequirePackedSetBehavior(const std::string& label) {
+  Set set;
+  const auto one = set.Insert(Pms("k2"));
+  Require(one.has_value(), label + " inserts k2");
+  const auto duplicate = one->Insert(Pms("k2"));
+  Require(!duplicate.has_value(), label + " rejects duplicate insert");
+  const auto added = one->Add(Pms("k1")).Add(Pms("k3")).Add(Pms("k2"));
+  Require(added.Contains(Pms("k1")), label + " contains k1");
+  Require(added.Contains(Pms("k2")), label + " contains k2");
+  Require(added.Contains(Pms("k3")), label + " contains k3");
+  const auto erased = added.Erase(Pms("k2"));
+  Require(erased.has_value(), label + " erases k2");
+  Require(!erased->Contains(Pms("k2")), label + " erased version misses k2");
+  Require(added.Contains(Pms("k2")), label + " old version keeps k2");
+  Require(added.ToVector()[0] == Pms("k1"), label + " ToVector sorted");
 }
 
 template <typename Set>
@@ -184,6 +233,32 @@ void TestImtSetStringBackends() {
   RequireStringSetBehavior<BlockSet>("block-tree-backed string ImtSet");
 }
 
+void TestPackedMapAndSetBackends() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+
+  using TreeMap = immutable_container::ImtMap<PackedString, PackedString>;
+  using BlockMapTree = immutable_container::ImmutableBlockTree<
+      PackedString, PackedString, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 512>;
+  using BlockMap =
+      immutable_container::ImtMap<PackedString, PackedString, std::less<PackedString>,
+                                  immutable_container::NonAtomicRefCount, BlockMapTree>;
+
+  using TreeSet = immutable_container::ImtSet<PackedString>;
+  using BlockSetTree = immutable_container::ImmutableBlockTree<
+      PackedString, UnitValue, std::less<PackedString>,
+      immutable_container::NonAtomicRefCount, 512>;
+  using BlockSet =
+      immutable_container::ImtSet<PackedString, std::less<PackedString>,
+                                  immutable_container::NonAtomicRefCount, BlockSetTree>;
+
+  RequirePackedMapBehavior<TreeMap>("packed tree-backed ImtMap");
+  RequirePackedMapBehavior<BlockMap>("packed block-tree-backed ImtMap");
+  RequirePackedSetBehavior<TreeSet>("packed tree-backed ImtSet");
+  RequirePackedSetBehavior<BlockSet>("packed block-tree-backed ImtSet");
+}
+
 }  // namespace
 
 int main() {
@@ -193,6 +268,7 @@ int main() {
     TestImtMapRandomWritesMatchStdMapAcrossTreeBackends();
     TestImtSetBehavior();
     TestImtSetStringBackends();
+    TestPackedMapAndSetBackends();
     std::cout << "imt_map_set_test passed\n";
     return 0;
   } catch (const std::exception& e) {
