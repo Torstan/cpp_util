@@ -262,6 +262,32 @@ void TestPackedStringMapPayloadBudgetAndLifetime() {
       [&] { left.WithInserted(1, Ps("oversized"), RepeatedPacked('z', 2000)); },
       "packed map direct insert rejects oversized entry in non-empty block");
 
+  const auto middle_insert_base = ZipList::FromSortedEntries({
+      {Ps("a"), RepeatedPacked('a', 50)},
+      {Ps("c"), RepeatedPacked('c', 50)},
+  });
+  const auto insert_blocks =
+      middle_insert_base.SplitWithInsertedBlocks(1, Ps("b"), RepeatedPacked('B', 2000));
+  RequireEqual(insert_blocks.size(), std::size_t{3},
+               "packed map split isolates middle oversized insert");
+  Require(insert_blocks[0].FrontKey() == Ps("a"), "packed map first split block key");
+  Require(insert_blocks[1].FrontKey() == Ps("b"), "packed map oversized split block key");
+  Require(insert_blocks[2].FrontKey() == Ps("c"), "packed map final split block key");
+
+  const auto middle_update_base = ZipList::FromSortedEntries({
+      {Ps("a"), RepeatedPacked('a', 50)},
+      {Ps("b"), RepeatedPacked('b', 50)},
+      {Ps("c"), RepeatedPacked('c', 50)},
+  });
+  const auto update_blocks =
+      middle_update_base.SplitWithUpdatedBlocks(1, RepeatedPacked('U', 2000));
+  RequireEqual(update_blocks.size(), std::size_t{3},
+               "packed map split isolates middle oversized update");
+  Require(update_blocks[1].FrontKey() == Ps("b"), "packed map updated split block key");
+  Require(*update_blocks[1].FindValue(Ps("b"), std::less<PackedString>()) ==
+              RepeatedPacked('U', 2000),
+          "packed map updated split block value");
+
   ZipList copied = oversized;
   Require(*copied.FindValue(Ps("huge"), std::less<PackedString>()) ==
               RepeatedPacked('x', 2000),

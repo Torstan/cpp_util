@@ -304,6 +304,16 @@ class ImmutableBlockTree {
     return NormalizeNode(std::move(split.first), std::move(left), std::move(split_right));
   }
 
+  NodePtr BuildSplitNodes(std::vector<Block> blocks, NodePtr left, NodePtr right) const {
+    NodePtr result = std::move(right);
+    for (std::size_t remaining = blocks.size(); remaining > 0; --remaining) {
+      NodePtr block_left = remaining == 1 ? std::move(left) : nullptr;
+      result = NormalizeNode(std::move(blocks[remaining - 1]), std::move(block_left),
+                             std::move(result));
+    }
+    return result;
+  }
+
   NodePtr InsertInNodeBlock(const NodePtr& node, std::size_t index, const Key& key,
                             const Value& value) const {
     if (!node->block.Full() && node->block.CanInsert(key, value)) {
@@ -311,8 +321,8 @@ class ImmutableBlockTree {
                           node->right);
     }
 
-    return BuildSplitNode(node->block.SplitWithInserted(index, key, value), node->left,
-                          node->right);
+    return BuildSplitNodes(node->block.SplitWithInsertedBlocks(index, key, value),
+                           node->left, node->right);
   }
 
   NodePtr UpdateInNodeBlock(const NodePtr& node, std::size_t index,
@@ -322,8 +332,8 @@ class ImmutableBlockTree {
                           node->right);
     }
 
-    return BuildSplitNode(node->block.SplitWithUpdated(index, value), node->left,
-                          node->right);
+    return BuildSplitNodes(node->block.SplitWithUpdatedBlocks(index, value), node->left,
+                           node->right);
   }
 
   std::optional<NodePtr> InsertNode(const NodePtr& node, const Key& key,

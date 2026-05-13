@@ -362,21 +362,36 @@ void TestPackedStringBlockTreeUpdateCanSplitBlock() {
       PackedString, PackedString, std::less<PackedString>,
       immutable_container::NonAtomicRefCount, 1024>;
 
-  Tree tree;
-  tree = *tree.Insert(Pbs("a"), RepeatedPackedString('a', 150));
-  tree = *tree.Insert(Pbs("b"), RepeatedPackedString('b', 150));
+  Tree insert_tree;
+  insert_tree = *insert_tree.Insert(Pbs("a"), RepeatedPackedString('a', 50));
+  insert_tree = *insert_tree.Insert(Pbs("c"), RepeatedPackedString('c', 50));
+  const auto inserted = insert_tree.Insert(Pbs("b"), RepeatedPackedString('B', 2000));
+  Require(inserted.has_value(), "packed map insert can isolate middle oversized value");
+  Require(*inserted->Find(Pbs("a")) == RepeatedPackedString('a', 50),
+          "packed map oversized insert keeps left value");
+  Require(*inserted->Find(Pbs("b")) == RepeatedPackedString('B', 2000),
+          "packed map oversized insert stores middle value");
+  Require(*inserted->Find(Pbs("c")) == RepeatedPackedString('c', 50),
+          "packed map oversized insert keeps right value");
 
-  const auto updated = tree.Update(Pbs("b"), RepeatedPackedString('B', 450));
+  Tree tree;
+  tree = *tree.Insert(Pbs("a"), RepeatedPackedString('a', 50));
+  tree = *tree.Insert(Pbs("b"), RepeatedPackedString('b', 50));
+  tree = *tree.Insert(Pbs("c"), RepeatedPackedString('c', 50));
+
+  const auto updated = tree.Update(Pbs("b"), RepeatedPackedString('B', 2000));
   Require(updated.has_value(), "packed map update can split payload-heavy block");
-  Require(*tree.Find(Pbs("b")) == RepeatedPackedString('b', 150),
+  Require(*tree.Find(Pbs("b")) == RepeatedPackedString('b', 50),
           "packed map update leaves old value unchanged");
-  Require(*updated->Find(Pbs("b")) == RepeatedPackedString('B', 450),
+  Require(*updated->Find(Pbs("b")) == RepeatedPackedString('B', 2000),
           "packed map update stores larger value");
 
-  const auto set = updated->Set(Pbs("a"), RepeatedPackedString('A', 2000));
-  Require(*set.Find(Pbs("a")) == RepeatedPackedString('A', 2000),
+  const auto set = tree.Set(Pbs("b"), RepeatedPackedString('S', 2000));
+  Require(*set.Find(Pbs("b")) == RepeatedPackedString('S', 2000),
           "packed map set can isolate oversized updated value");
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+  Require(inserted->DebugValidateInvariantsForTest(),
+          "packed map oversized insert split invariants");
   Require(set.DebugValidateInvariantsForTest(), "packed map update split invariants");
 #endif
 }
