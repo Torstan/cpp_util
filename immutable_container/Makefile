@@ -84,6 +84,15 @@ $(STRING_REPORT_RAW): $(STRING_REPORT_BENCH_BIN)
 			done; \
 		done; \
 	done; \
+	for name in map_tree_int32 map_block_tree_2048_int32 map_block_tree_4096_int32; do \
+		for pattern in sorted random; do \
+			for size in 1 10 100 1000 10000 100000; do \
+				./$(STRING_REPORT_BENCH_BIN) --name "$$name" --pattern "$$pattern" \
+					--size "$$size" --key-bytes 4 \
+					--value-bytes 4 >> "$$tmp" || exit $$?; \
+			done; \
+		done; \
+	done; \
 	for name in set_tree_packed_string set_block_tree_4096_packed_string; do \
 		for pattern in sorted random; do \
 			for key_bytes in 32 64; do \
