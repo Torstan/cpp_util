@@ -71,7 +71,7 @@ $(STRING_REPORT_RAW): $(STRING_REPORT_BENCH_BIN)
 	@tmp="$(STRING_REPORT_RAW).tmp"; \
 	rm -f "$$tmp"; \
 	./$(STRING_REPORT_BENCH_BIN) --env > "$$tmp"; \
-	for name in immutable_tree block_tree_2048 block_tree_4096; do \
+	for name in map_tree_std_string map_block_tree_2048_std_string map_block_tree_4096_std_string map_tree_packed_string map_block_tree_2048_packed_string map_block_tree_4096_packed_string; do \
 		for pattern in sorted random; do \
 			for key_bytes in 32 64; do \
 				for value_bytes in 64 128 256 1024; do \
@@ -80,6 +80,17 @@ $(STRING_REPORT_RAW): $(STRING_REPORT_BENCH_BIN)
 							--size "$$size" --key-bytes "$$key_bytes" \
 							--value-bytes "$$value_bytes" >> "$$tmp" || exit $$?; \
 					done; \
+				done; \
+			done; \
+		done; \
+	done; \
+	for name in set_tree_packed_string set_block_tree_4096_packed_string; do \
+		for pattern in sorted random; do \
+			for key_bytes in 32 64; do \
+				for size in 1 10 100 1000 10000 100000; do \
+					./$(STRING_REPORT_BENCH_BIN) --name "$$name" --pattern "$$pattern" \
+						--size "$$size" --key-bytes "$$key_bytes" \
+						--value-bytes 0 >> "$$tmp" || exit $$?; \
 				done; \
 			done; \
 		done; \
