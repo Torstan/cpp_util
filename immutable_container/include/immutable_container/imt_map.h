@@ -1,6 +1,7 @@
 #ifndef IMMUTABLE_CONTAINER_IMT_MAP_H_
 #define IMMUTABLE_CONTAINER_IMT_MAP_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -18,7 +19,27 @@ template <typename Key, typename Value, typename Comp = std::less<Key>,
           typename Tree = ImmutableTree<Key, Value, Comp, RefCountPolicy>>
 class ImtMap {
  public:
+  using Entry = std::pair<Key, Value>;
+
   ImtMap() = default;
+
+  static std::optional<ImtMap> FromEntries(std::vector<Entry> entries) {
+    Comp comp{};
+    std::sort(entries.begin(), entries.end(),
+              [&comp](const Entry& left, const Entry& right) {
+                return comp(left.first, right.first);
+              });
+
+    for (std::size_t index = 1; index < entries.size(); ++index) {
+      const Key& previous = entries[index - 1].first;
+      const Key& current = entries[index].first;
+      if (!comp(previous, current) && !comp(current, previous)) {
+        return std::nullopt;
+      }
+    }
+
+    return ImtMap(Tree::FromSortedUniqueEntries(std::move(entries), std::move(comp)));
+  }
 
   bool Empty() const { return tree_.Empty(); }
 

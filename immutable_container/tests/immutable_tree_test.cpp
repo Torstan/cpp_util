@@ -201,6 +201,25 @@ void TestAvlBalancingForSortedInput() {
   Require(right_left.Height() <= 2, "right-left rotation balances height");
 }
 
+void TestFromSortedUniqueEntriesBuildsBalancedTree() {
+  using Tree = immutable_container::ImmutableTree<int, std::string>;
+  std::vector<std::pair<int, std::string>> entries;
+  for (int i = 1; i <= 15; ++i) {
+    entries.push_back({i, "v" + std::to_string(i)});
+  }
+
+  const Tree tree = Tree::FromSortedUniqueEntries(std::move(entries));
+  RequireEqual(tree.Size(), std::size_t{15}, "bulk tree size");
+  RequireEqual(tree.Height(), 4, "bulk tree height for 15 entries");
+  RequireEqual(*tree.Find(1), std::string("v1"), "bulk tree finds first key");
+  RequireEqual(*tree.Find(8), std::string("v8"), "bulk tree finds middle key");
+  RequireEqual(*tree.Find(15), std::string("v15"), "bulk tree finds last key");
+
+  const auto values = tree.ToVector();
+  RequireEqual(values.front().first, 1, "bulk tree vector first key");
+  RequireEqual(values.back().first, 15, "bulk tree vector last key");
+}
+
 void TestSharedNodeObservation() {
   const auto tree = BuildTree({
       {4, "four"},
@@ -292,6 +311,7 @@ int main() {
     TestUpdateAndSetCreateNewVersions();
     TestEraseCreatesNewVersions();
     TestAvlBalancingForSortedInput();
+    TestFromSortedUniqueEntriesBuildsBalancedTree();
     TestSharedNodeObservation();
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestPackedStringTreeNodeLayoutBudget();

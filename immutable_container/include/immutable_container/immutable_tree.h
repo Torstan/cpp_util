@@ -34,10 +34,11 @@ class ImmutableTree {
     std::uint32_t size;
     std::uint16_t height;
 
-    Node(const Key& node_key, const Value& node_value, NodePtr node_left,
+    template <typename NodeKey, typename NodeValue>
+    Node(NodeKey&& node_key, NodeValue&& node_value, NodePtr node_left,
          NodePtr node_right, std::uint32_t node_size, std::uint16_t node_height)
-        : key(node_key),
-          value(node_value),
+        : key(std::forward<NodeKey>(node_key)),
+          value(std::forward<NodeValue>(node_value)),
           left(std::move(node_left)),
           right(std::move(node_right)),
           size(node_size),
@@ -61,7 +62,15 @@ class ImmutableTree {
   };
 
  public:
+  using Entry = std::pair<Key, Value>;
+
   ImmutableTree() = default;
+
+  static ImmutableTree FromSortedUniqueEntries(std::vector<Entry> entries,
+                                               Comp comp = Comp{}) {
+    NodePtr root = BuildBalancedFromSorted(&entries, 0, entries.size());
+    return ImmutableTree(std::move(root), std::move(comp));
+  }
 
   bool Empty() const { return root_ == nullptr; }
 
@@ -153,7 +162,9 @@ class ImmutableTree {
 
   bool Less(const Key& lhs, const Key& rhs) const { return comp_(lhs, rhs); }
 
-  static NodePtr MakeNode(const Key& key, const Value& value, NodePtr left, NodePtr right) {
+  template <typename NodeKey, typename NodeValue>
+  static NodePtr MakeNode(NodeKey&& key, NodeValue&& value, NodePtr left,
+                          NodePtr right) {
     const int height = 1 + std::max(Height(left), Height(right));
     if (height > static_cast<int>(std::numeric_limits<std::uint16_t>::max())) {
       throw std::length_error("ImmutableTree node height exceeds uint16_t max");
@@ -167,8 +178,9 @@ class ImmutableTree {
     }
 
     const std::size_t size = 1 + left_size + right_size;
-    return NodePtr::Adopt(new Node(key, value, std::move(left), std::move(right),
-                                   static_cast<std::uint32_t>(size),
+    return NodePtr::Adopt(new Node(std::forward<NodeKey>(key),
+                                   std::forward<NodeValue>(value), std::move(left),
+                                   std::move(right), static_cast<std::uint32_t>(size),
                                    static_cast<std::uint16_t>(height)));
   }
 
@@ -338,6 +350,20 @@ class ImmutableTree {
     AppendInOrder(node->left, result);
     result->push_back({node->key, node->value});
     AppendInOrder(node->right, result);
+  }
+
+  static NodePtr BuildBalancedFromSorted(std::vector<Entry>* entries,
+                                         std::size_t begin, std::size_t end) {
+    if (begin == end) {
+      return nullptr;
+    }
+
+    const std::size_t middle = begin + (end - begin) / 2;
+    NodePtr left = BuildBalancedFromSorted(entries, begin, middle);
+    NodePtr right = BuildBalancedFromSorted(entries, middle + 1, end);
+    Entry& entry = (*entries)[middle];
+    return MakeNode(std::move(entry.first), std::move(entry.second),
+                    std::move(left), std::move(right));
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS

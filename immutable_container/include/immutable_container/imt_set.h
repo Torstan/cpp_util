@@ -1,6 +1,7 @@
 #ifndef IMMUTABLE_CONTAINER_IMT_SET_H_
 #define IMMUTABLE_CONTAINER_IMT_SET_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -20,6 +21,25 @@ template <typename Key, typename Comp = std::less<Key>,
 class ImtSet {
  public:
   ImtSet() = default;
+
+  static ImtSet FromKeys(std::vector<Key> keys) {
+    Comp comp{};
+    std::sort(keys.begin(), keys.end(), comp);
+
+    auto unique_end = std::unique(keys.begin(), keys.end(),
+                                  [&comp](const Key& left, const Key& right) {
+                                    return !comp(left, right) && !comp(right, left);
+                                  });
+    keys.erase(unique_end, keys.end());
+
+    std::vector<std::pair<Key, UnitValue>> entries;
+    entries.reserve(keys.size());
+    for (auto& key : keys) {
+      entries.push_back({std::move(key), UnitValue{}});
+    }
+
+    return ImtSet(Tree::FromSortedUniqueEntries(std::move(entries), std::move(comp)));
+  }
 
   bool Empty() const { return tree_.Empty(); }
 

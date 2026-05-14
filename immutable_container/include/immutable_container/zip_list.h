@@ -1,6 +1,7 @@
 #ifndef IMMUTABLE_CONTAINER_ZIP_LIST_H_
 #define IMMUTABLE_CONTAINER_ZIP_LIST_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -52,15 +53,36 @@ class ZipList {
   static constexpr std::size_t DefaultCapacity() { return kCapacity; }
 
   static ZipList FromSortedEntries(const std::vector<Entry>& entries) {
+    std::vector<Entry> copy = entries;
+    return FromSortedEntries(std::move(copy));
+  }
+
+  static ZipList FromSortedEntries(std::vector<Entry>&& entries) {
     if (entries.size() > DefaultCapacity()) {
       throw std::invalid_argument("ZipList entries exceed capacity");
     }
 
     ZipList result;
-    for (const auto& entry : entries) {
-      result.ConstructBack(entry);
+    for (auto& entry : entries) {
+      result.ConstructBack(std::move(entry));
     }
     return result;
+  }
+
+  static std::vector<ZipList> PackSortedEntriesIntoBlocks(std::vector<Entry> entries) {
+    std::vector<ZipList> blocks;
+    blocks.reserve((entries.size() + DefaultCapacity() - 1) / DefaultCapacity());
+    for (std::size_t begin = 0; begin < entries.size();) {
+      const std::size_t end = std::min(entries.size(), begin + DefaultCapacity());
+      std::vector<Entry> block_entries;
+      block_entries.reserve(end - begin);
+      for (std::size_t index = begin; index < end; ++index) {
+        block_entries.push_back(std::move(entries[index]));
+      }
+      blocks.push_back(FromSortedEntries(std::move(block_entries)));
+      begin = end;
+    }
+    return blocks;
   }
 
   std::size_t Count() const { return count_; }
@@ -304,6 +326,14 @@ class ZipList {
 #endif
   }
 
+  void ConstructBack(Entry&& entry) {
+    new (&entries_[count_]) Entry(std::move(entry));
+    ++count_;
+#ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
+    ++live_entry_count_;
+#endif
+  }
+
   void ConstructBack(const Key& key, const Value& value) {
     new (&entries_[count_]) Entry(key, value);
     ++count_;
@@ -397,6 +427,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static constexpr bool UsesPackedStorageForTest() { return true; }
 
   static ZipList FromSortedEntries(const std::vector<Entry>& entries) {
+    std::vector<Entry> copy = entries;
+    return FromSortedEntries(std::move(copy));
+  }
+
+  static ZipList FromSortedEntries(std::vector<Entry>&& entries) {
     if (entries.size() > DefaultCapacity()) {
       throw std::invalid_argument("ZipList entries exceed capacity");
     }
@@ -404,10 +439,15 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     ZipList result;
     const std::size_t value_inline_budget =
         ValueInlineBudgetForEntries(entries.begin(), entries.end());
-    for (const auto& entry : entries) {
-      result.ConstructBack(entry.first, entry.second, value_inline_budget);
+    for (auto& entry : entries) {
+      result.ConstructBack(std::move(entry.first), std::move(entry.second),
+                           value_inline_budget);
     }
     return result;
+  }
+
+  static std::vector<ZipList> PackSortedEntriesIntoBlocks(std::vector<Entry> entries) {
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   std::size_t Count() const { return count_; }
@@ -563,7 +603,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     for (std::size_t i = 0; i < count_; ++i) {
       entries.push_back({KeyAt(i), i == index ? value : ValueAt(i)});
     }
-    return PackEntriesIntoBlocks(entries);
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   ZipList WithErased(std::size_t index) const {
@@ -627,7 +667,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     for (std::size_t i = index; i < count_; ++i) {
       entries.push_back({KeyAt(i), ValueAt(i)});
     }
-    return PackEntriesIntoBlocks(entries);
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   static bool CanMerge(const ZipList& left, const ZipList& right) {
@@ -793,7 +833,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return true;
   }
 
-  static std::vector<ZipList> PackEntriesIntoBlocks(const std::vector<Entry>& entries) {
+  static std::vector<ZipList> PackEntriesIntoBlocks(std::vector<Entry> entries) {
     std::vector<ZipList> blocks;
     std::size_t begin = 0;
     while (begin < entries.size()) {
@@ -805,8 +845,12 @@ class ZipList<PackedString, PackedString, TargetBytes> {
              EntriesFit(entries.begin() + begin, entries.begin() + end + 1)) {
         ++end;
       }
-      std::vector<Entry> block_entries(entries.begin() + begin, entries.begin() + end);
-      blocks.push_back(FromSortedEntries(block_entries));
+      std::vector<Entry> block_entries;
+      block_entries.reserve(end - begin);
+      for (std::size_t index = begin; index < end; ++index) {
+        block_entries.push_back(std::move(entries[index]));
+      }
+      blocks.push_back(FromSortedEntries(std::move(block_entries)));
       begin = end;
     }
     return blocks;
@@ -826,14 +870,15 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return Key(key.Data(), key.Size());
   }
 
-  KeyRef StoreKey(const PackedString& text) {
+  template <typename Text>
+  KeyRef StoreKey(Text&& text) {
     if (UsesExternalKey(text)) {
       auto& external_keys = ExternalKeys();
       if (external_keys.size() >= kExternalKeyMarker) {
         throw std::logic_error("ZipList external key index exceeds compact key reference");
       }
       const std::size_t index = external_keys.size();
-      external_keys.push_back(text);
+      external_keys.push_back(std::forward<Text>(text));
       return KeyRef{static_cast<std::uint16_t>(index), kExternalKeyMarker};
     }
 
@@ -861,7 +906,8 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return value_payload_used_ + value.Size() <= value_inline_budget;
   }
 
-  void ConstructValue(const Value& value, std::size_t value_inline_budget) {
+  template <typename Text>
+  void ConstructValue(Text&& value, std::size_t value_inline_budget) {
     if (CanStoreValueInline(value, value_inline_budget)) {
       value_payload_used_ =
           static_cast<std::uint16_t>(value_payload_used_ + value.Size());
@@ -871,13 +917,14 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       return;
     }
 
-    new (ValueSlot(count_)) Value(value);
-    if (value.Size() > PackedString::kInlineCapacity) {
+    new (ValueSlot(count_)) Value(std::forward<Text>(value));
+    if (ValueSlot(count_)->Size() > PackedString::kInlineCapacity) {
       ++external_value_count_;
     }
   }
 
-  void ConstructBack(const Key& key, const Value& value,
+  template <typename NodeKey, typename NodeValue>
+  void ConstructBack(NodeKey&& key, NodeValue&& value,
                      std::size_t value_inline_budget) {
     if (count_ == DefaultCapacity()) {
       throw std::logic_error("ZipList entries exceed capacity");
@@ -890,9 +937,9 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     const std::uint16_t previous_value_payload_used = value_payload_used_;
     const std::uint16_t previous_external_value_count = external_value_count_;
     const std::size_t previous_external_key_count = ExternalKeyCount();
-    const KeyRef key_ref = StoreKey(key);
+    const KeyRef key_ref = StoreKey(std::forward<NodeKey>(key));
     try {
-      ConstructValue(value, value_inline_budget);
+      ConstructValue(std::forward<NodeValue>(value), value_inline_budget);
     } catch (...) {
       payload_used_ = previous_payload_used;
       value_payload_used_ = previous_value_payload_used;
@@ -1032,15 +1079,24 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
   static constexpr bool UsesPackedStorageForTest() { return true; }
 
   static ZipList FromSortedEntries(const std::vector<Entry>& entries) {
+    std::vector<Entry> copy = entries;
+    return FromSortedEntries(std::move(copy));
+  }
+
+  static ZipList FromSortedEntries(std::vector<Entry>&& entries) {
     if (entries.size() > DefaultCapacity()) {
       throw std::invalid_argument("ZipList entries exceed capacity");
     }
 
     ZipList result;
-    for (const auto& entry : entries) {
-      result.ConstructBack(entry.first);
+    for (auto& entry : entries) {
+      result.ConstructBack(std::move(entry.first));
     }
     return result;
+  }
+
+  static std::vector<ZipList> PackSortedEntriesIntoBlocks(std::vector<Entry> entries) {
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   std::size_t Count() const { return count_; }
@@ -1187,7 +1243,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     std::vector<Entry> entries;
     entries.reserve(count_);
     AppendTo(&entries);
-    return PackEntriesIntoBlocks(entries);
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   ZipList WithErased(std::size_t index) const {
@@ -1247,7 +1303,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     for (std::size_t i = index; i < count_; ++i) {
       entries.push_back({KeyAt(i), StaticValue()});
     }
-    return PackEntriesIntoBlocks(entries);
+    return PackEntriesIntoBlocks(std::move(entries));
   }
 
   static bool CanMerge(const ZipList& left, const ZipList& right) {
@@ -1373,7 +1429,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     return true;
   }
 
-  static std::vector<ZipList> PackEntriesIntoBlocks(const std::vector<Entry>& entries) {
+  static std::vector<ZipList> PackEntriesIntoBlocks(std::vector<Entry> entries) {
     std::vector<ZipList> blocks;
     std::size_t begin = 0;
     while (begin < entries.size()) {
@@ -1385,8 +1441,12 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
              EntriesFit(entries.begin() + begin, entries.begin() + end + 1)) {
         ++end;
       }
-      std::vector<Entry> block_entries(entries.begin() + begin, entries.begin() + end);
-      blocks.push_back(FromSortedEntries(block_entries));
+      std::vector<Entry> block_entries;
+      block_entries.reserve(end - begin);
+      for (std::size_t index = begin; index < end; ++index) {
+        block_entries.push_back(std::move(entries[index]));
+      }
+      blocks.push_back(FromSortedEntries(std::move(block_entries)));
       begin = end;
     }
     return blocks;
@@ -1405,7 +1465,8 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     return std::string_view(payload_ + offset, text.Size());
   }
 
-  void ConstructBack(const Key& key) {
+  template <typename NodeKey>
+  void ConstructBack(NodeKey&& key) {
     if (count_ == DefaultCapacity()) {
       throw std::logic_error("ZipList entries exceed capacity");
     }
@@ -1414,7 +1475,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     }
 
     if (UsesExternalPayload(key)) {
-      new (KeySlot(count_)) Key(key);
+      new (KeySlot(count_)) Key(std::forward<NodeKey>(key));
     } else {
       const std::string_view key_view = StoreBytes(key);
       Key key_ref = Key::Borrowed(key_view.data(), key_view.size());

@@ -90,6 +90,13 @@ class ImmutableBlockTree {
 
   ImmutableBlockTree() = default;
 
+  static ImmutableBlockTree FromSortedUniqueEntries(
+      std::vector<std::pair<Key, Value>> entries, Comp comp = Comp{}) {
+    std::vector<Block> blocks = Block::PackSortedEntriesIntoBlocks(std::move(entries));
+    NodePtr root = BuildBalancedFromBlocks(&blocks, 0, blocks.size());
+    return ImmutableBlockTree(std::move(root), std::move(comp));
+  }
+
   bool Empty() const { return root_ == nullptr; }
 
   std::size_t Size() const { return Size(root_); }
@@ -508,6 +515,18 @@ class ImmutableBlockTree {
     AppendInOrder(node->left, result);
     node->block.AppendTo(result);
     AppendInOrder(node->right, result);
+  }
+
+  static NodePtr BuildBalancedFromBlocks(std::vector<Block>* blocks, std::size_t begin,
+                                         std::size_t end) {
+    if (begin == end) {
+      return nullptr;
+    }
+
+    const std::size_t middle = begin + (end - begin) / 2;
+    NodePtr left = BuildBalancedFromBlocks(blocks, begin, middle);
+    NodePtr right = BuildBalancedFromBlocks(blocks, middle + 1, end);
+    return MakeNode(std::move((*blocks)[middle]), std::move(left), std::move(right));
   }
 
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
