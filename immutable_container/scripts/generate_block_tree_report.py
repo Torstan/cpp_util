@@ -476,6 +476,10 @@ def fmt_float(value, digits=2):
     return f"{float(value):.{digits}f}"
 
 
+def build_mode(case):
+    return case.get("build_mode", "")
+
+
 def fmt_metric_value(field, value):
     if field == "allocated_per_entry":
         return f"{float(value):.1f} B/entry"
@@ -608,6 +612,7 @@ def summary_rows(cases):
                             [
                                 FAMILY_LABELS[family],
                                 pattern,
+                                build_mode(row),
                                 _n(fmt_int(key_bytes)),
                                 _n(fmt_int(value_bytes)),
                                 implementation_label(name),
@@ -687,6 +692,24 @@ def _table(headers, rows):
     )
 
 
+def _mini_table(headers, rows):
+    header_html = "".join(_th(header) for header in headers)
+    body = []
+    for row in rows:
+        body.append(
+            "<tr>"
+            + "".join(_td(value, "num" if isinstance(value, Numeric) else None) for value in row)
+            + "</tr>"
+        )
+    return (
+        "<table class=\"raw-chart-table\">\n<thead><tr>"
+        + header_html
+        + "</tr></thead>\n<tbody>\n"
+        + "\n".join(body)
+        + "\n</tbody>\n</table>"
+    )
+
+
 class Numeric(str):
     pass
 
@@ -703,6 +726,7 @@ def performance_rows(cases):
                 FAMILY_LABELS[family_for_name(row["name"])],
                 implementation_label(row["name"]),
                 row["pattern"],
+                build_mode(row),
                 _n(fmt_int(row["key_bytes"])),
                 _n(fmt_int(row["value_bytes"])),
                 _n(fmt_int(row["size"])),
@@ -757,6 +781,79 @@ def memory_rows(cases):
     return rows
 
 
+def summary_target_rows(cases):
+    target_names = (
+        "map_tree_packed_string",
+        "map_block_tree_2048_packed_string",
+        "map_block_tree_4096_packed_string",
+    )
+    target = {
+        row["name"]: row
+        for row in cases
+        if row["pattern"] == "sorted"
+        and row["key_bytes"] == 32
+        and row["value_bytes"] == 64
+        and row["size"] == 100000
+        and row["name"] in target_names
+    }
+    rows = []
+    for name in target_names:
+        row = target.get(name)
+        if row is None:
+            continue
+        rows.append(
+            [
+                implementation_label(name),
+                build_mode(row),
+                _n(fmt_us(row["build_us"])),
+                _n(fmt_bytes(row["allocated_delta"])),
+                _n(fmt_bytes_per_entry(row["allocated_delta"], row["size"])),
+                _n(fmt_int(row["height"])),
+                _n(fmt_int(row["nodes"])) if row.get("nodes") not in ("", None) else "",
+                _n(fmt_float(row["avg_fill"], 3)) if row.get("avg_fill") not in ("", None) else "",
+            ]
+        )
+    return rows
+
+
+def summary_html(cases):
+    sorted_modes = sorted({build_mode(row) for row in cases if row["pattern"] == "sorted" and build_mode(row)})
+    random_modes = sorted({build_mode(row) for row in cases if row["pattern"] == "random" and build_mode(row)})
+    families = sorted({FAMILY_LABELS[family_for_name(row["name"])] for row in cases})
+    items = [
+        f"The report contains {fmt_int(len(cases))} benchmark rows across {fmt_int(len(families))} container families.",
+        "Sorted workloads use build modes: " + (", ".join(sorted_modes) if sorted_modes else "not recorded") + ".",
+        "Random workloads use build modes: " + (", ".join(random_modes) if random_modes else "not recorded") + ".",
+        "Each chart now includes a raw-data table directly below the plotted lines so values can be checked without scrolling to the large tables.",
+    ]
+    target_rows = summary_target_rows(cases)
+    table = ""
+    if target_rows:
+        table = (
+            "<h3>Target Case: ImtMap PackedString, sorted, key=32 bytes, "
+            "value=64 bytes, size=100,000</h3>"
+            + _table(
+                [
+                    "Implementation",
+                    "Build mode",
+                    "Build",
+                    "Allocated",
+                    "Allocated / entry",
+                    "Height",
+                    "Nodes",
+                    "Average fill",
+                ],
+                target_rows,
+            )
+        )
+    return (
+        "<ul>\n"
+        + "\n".join(f"<li>{_html_escape(item)}</li>" for item in items)
+        + "\n</ul>"
+        + table
+    )
+
+
 def structure_rows(cases):
     rows = []
     for row in sorted(cases, key=sort_key):
@@ -797,6 +894,38 @@ def _series_for_group(rows, field, names):
     for values in by_name.values():
         values.sort()
     return by_name
+
+
+def _chart_raw_table(rows, field, names):
+    series = _series_for_group(rows, field, names)
+    sizes = sorted({size for points in series.values() for size, _value in points})
+    if not sizes:
+        return ""
+    values_by_name = {
+        name: {size: value for size, value in points}
+        for name, points in series.items()
+    }
+    table_rows = []
+    for size in sizes:
+        table_row = [_n(fmt_int(size))]
+        for name in names:
+            value = values_by_name.get(name, {}).get(size)
+            table_row.append(_n(fmt_metric_value(field, value)) if value is not None else "")
+        table_rows.append(table_row)
+    headers = ["Size"] + [implementation_label(name) for name in names]
+    return (
+        '<div class="raw-data-title">Raw data</div>'
+        + _mini_table(headers, table_rows)
+    )
+
+
+def _chart_card_html(rows, field, label, unit, names):
+    return (
+        '<div class="chart-card">'
+        + _chart_svg(rows, field, label, unit, names)
+        + _chart_raw_table(rows, field, names)
+        + "</div>"
+    )
 
 
 def _chart_svg(rows, field, title, unit, names):
@@ -894,11 +1023,7 @@ def _chart_group_html(family, pattern, key_bytes, value_bytes, rows, metrics=CHA
     names = tuple(name for name in family_implementations(family) if name in present)
     charts = []
     for field, label, unit in metrics:
-        charts.append(
-            '<div class="chart-card">'
-            + _chart_svg(rows, field, label, unit, names)
-            + "</div>"
-        )
+        charts.append(_chart_card_html(rows, field, label, unit, names))
     value_label = "set keys only" if is_set_case(names[0]) else f"{fmt_int(value_bytes)}-byte values"
     heading = (
         f"{FAMILY_LABELS[family]}: {pattern} inserts, "
@@ -913,11 +1038,7 @@ def _chart_group_html(family, pattern, key_bytes, value_bytes, rows, metrics=CHA
 def _unified_map_group_html(heading, rows, names):
     charts = []
     for field, label, unit in UNIFIED_MAP_CHART_METRICS:
-        charts.append(
-            '<div class="chart-card">'
-            + _chart_svg(rows, field, label, unit, names)
-            + "</div>"
-        )
+        charts.append(_chart_card_html(rows, field, label, unit, names))
     return (
         f"<section class=\"chart-group\"><h3>{_html_escape(heading)}</h3>"
         f"<div class=\"chart-grid\">{''.join(charts)}</div></section>"
@@ -999,6 +1120,8 @@ def metadata(env, cases, args, input_label):
     for key in ("allocator", "api", "key_type", "value_type", "key_types", "value_types"):
         if key in env:
             values[key.replace("_", " ")] = env[key]
+    if "build_modes" in env:
+        values["build modes"] = env["build_modes"]
     values["key byte lengths"] = ", ".join(fmt_int(v) for v in sorted({r["key_bytes"] for r in cases}))
     map_value_bytes = sorted({r["value_bytes"] for r in cases if not is_set_case(r["name"])})
     set_value_bytes = sorted({r["value_bytes"] for r in cases if is_set_case(r["name"])})
@@ -1125,6 +1248,20 @@ p {{ color: var(--muted); margin: 0 0 16px; }}
   padding: 10px;
   overflow-x: auto;
 }}
+.raw-data-title {{
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin: 8px 0 4px;
+}}
+.raw-chart-table {{
+  font-size: 11px;
+  min-width: 0;
+}}
+.raw-chart-table th,
+.raw-chart-table td {{
+  padding: 5px 6px;
+}}
 .chart-svg {{
   display: block;
   height: auto;
@@ -1158,6 +1295,11 @@ li {{ margin: 6px 0; }}
 {_metadata_html(metadata(env, cases, args, input_label))}
 </div>
 
+<h2>Summary</h2>
+<div class="panel">
+{summary_html(cases)}
+</div>
+
 <h2>Observations</h2>
 <div class="panel">
 {_observations_html(build_observations(cases))}
@@ -1170,7 +1312,7 @@ li {{ margin: 6px 0; }}
 
 <h2>Largest-Size Ratios</h2>
 <div class="panel">
-{_table(["Family", "Pattern", "Key bytes", "Value bytes", "Implementation", "Size", "Build", "Hit contains", "Miss contains", "To vector", "Allocated"], summary_rows(cases))}
+{_table(["Family", "Pattern", "Build mode", "Key bytes", "Value bytes", "Implementation", "Size", "Build", "Hit contains", "Miss contains", "To vector", "Allocated"], summary_rows(cases))}
 </div>
 
 <h2>Map Find Largest-Size Ratios</h2>
@@ -1189,7 +1331,7 @@ li {{ margin: 6px 0; }}
 
 <h2>Performance</h2>
 <div class="panel">
-{_table(["Family", "Implementation", "Pattern", "Key bytes", "Value bytes", "Size", "Build", "Hit contains", "Miss contains", "To vector"], performance_rows(cases))}
+{_table(["Family", "Implementation", "Pattern", "Build mode", "Key bytes", "Value bytes", "Size", "Build", "Hit contains", "Miss contains", "To vector"], performance_rows(cases))}
 </div>
 
 <h2>Map Find Performance</h2>
@@ -1251,8 +1393,8 @@ def write_report(output_path, html_text):
 
 def self_test():
     row_type, fields = parse_line(
-        "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
-        "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
+        "case,name=map_tree_std_string,pattern=sorted,size=1000,key_bytes=32,value_bytes=64,"
+        "height=10,build_mode=bulk_from_entries,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
         "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
         "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
         "allocated_delta=4096,active_delta=8192,resident_delta=16384"
@@ -1263,65 +1405,75 @@ def self_test():
     env, cases = _read_rows_from_iter(
         [
             "env,allocator=jemalloc,api=ImtMap,key_types=std::string|PackedString,"
-            "value_types=std::string|PackedString\n",
+            "value_types=std::string|PackedString,"
+            "build_modes=sorted:bulk_from_entries|random:insert_loop\n",
             "case,name=map_tree_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
-            "height=10,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
+            "height=10,build_mode=insert_loop,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
             "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
             "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             "case,name=map_block_tree_2048_std_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
-            "height=5,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
+            "height=5,build_mode=insert_loop,build_us=1234,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=900,find_hit_us=11,find_miss_us=12,"
             "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
             "allocated_delta=4096,active_delta=8192,resident_delta=16384,"
             "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
             "min_block_count=1\n",
             "case,name=map_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
-            "height=10,build_us=100,hit_contains_us=200,miss_contains_us=300,"
+            "height=10,build_mode=insert_loop,build_us=100,hit_contains_us=200,miss_contains_us=300,"
             "to_vector_us=400,find_hit_us=21,find_miss_us=22,"
             "find_hit_value_size_us=23,find_hit_value_scan_us=24,"
             "allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             "case,name=map_block_tree_4096_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=64,"
-            "height=4,build_us=90,hit_contains_us=180,miss_contains_us=280,"
+            "height=4,build_mode=insert_loop,build_us=90,hit_contains_us=180,miss_contains_us=280,"
             "to_vector_us=350,find_hit_us=19,find_miss_us=20,"
             "find_hit_value_size_us=21,find_hit_value_scan_us=22,"
             "allocated_delta=2048,active_delta=4096,resident_delta=8192,"
             "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
             "min_block_count=1\n",
             "case,name=set_tree_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=0,"
-            "height=10,build_us=100,hit_contains_us=200,miss_contains_us=300,"
+            "height=10,build_mode=insert_loop,build_us=100,hit_contains_us=200,miss_contains_us=300,"
             "to_vector_us=400,allocated_delta=4096,active_delta=8192,resident_delta=16384\n",
             "case,name=set_block_tree_4096_packed_string,pattern=random,size=1000,key_bytes=32,value_bytes=0,"
-            "height=4,build_us=90,hit_contains_us=180,miss_contains_us=280,"
+            "height=4,build_mode=insert_loop,build_us=90,hit_contains_us=180,miss_contains_us=280,"
             "to_vector_us=350,allocated_delta=2048,active_delta=4096,resident_delta=8192,"
             "nodes=4,zip_lists=4,entries=1000,entry_capacity=1024,avg_fill=0.977,"
             "min_block_count=1\n",
             "case,name=map_tree_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
-            "height=10,build_us=123,hit_contains_us=56,miss_contains_us=78,"
+            "height=10,build_mode=insert_loop,build_us=123,hit_contains_us=56,miss_contains_us=78,"
             "to_vector_us=90,find_hit_us=11,find_miss_us=12,"
             "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
             "allocated_delta=4000,active_delta=8192,resident_delta=16384\n",
             "case,name=map_block_tree_2048_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
-            "height=5,build_us=120,hit_contains_us=50,miss_contains_us=70,"
+            "height=5,build_mode=insert_loop,build_us=120,hit_contains_us=50,miss_contains_us=70,"
             "to_vector_us=88,find_hit_us=10,find_miss_us=12,"
             "find_hit_value_size_us=13,find_hit_value_scan_us=14,"
             "allocated_delta=3000,active_delta=8192,resident_delta=16384,"
             "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
             "min_block_count=1\n",
             "case,name=map_block_tree_4096_int32,pattern=random,size=1000,key_bytes=4,value_bytes=4,"
-            "height=5,build_us=118,hit_contains_us=49,miss_contains_us=69,"
+            "height=5,build_mode=insert_loop,build_us=118,hit_contains_us=49,miss_contains_us=69,"
             "to_vector_us=86,find_hit_us=9,find_miss_us=11,"
             "find_hit_value_size_us=12,find_hit_value_scan_us=13,"
             "allocated_delta=2800,active_delta=8192,resident_delta=16384,"
             "nodes=7,zip_lists=6,entries=1000,entry_capacity=1200,avg_fill=0.8333,"
             "min_block_count=1\n",
+            "case,name=map_tree_std_string,pattern=sorted,size=1000,key_bytes=32,value_bytes=64,"
+            "height=10,build_mode=bulk_from_entries,build_us=1000,"
+            "hit_contains_us=56,miss_contains_us=78,to_vector_us=900,"
+            "find_hit_us=11,find_miss_us=12,find_hit_value_size_us=13,"
+            "find_hit_value_scan_us=14,allocated_delta=4096,active_delta=8192,"
+            "resident_delta=16384\n",
         ],
         "<self-test>",
         require_complete_matrix=False,
     )
     assert env["allocator"] == "jemalloc"
+    assert env["build_modes"] == "sorted:bulk_from_entries|random:insert_loop"
     assert cases[0]["key_bytes"] == 32
     assert cases[0]["value_bytes"] == 64
+    assert cases[0]["build_mode"] == "insert_loop"
+    assert cases[-1]["build_mode"] == "bulk_from_entries"
     assert cases[0]["find_hit_us"] == 11
     assert cases[0]["find_hit_value_scan_us"] == 14
     assert cases[1]["nodes"] == 7
@@ -1380,11 +1532,17 @@ def self_test():
     assert "Minimum block count" in html_text
     assert "<th>Map Value Byte Lengths</th>" in html_text
     assert "<th>Set Value Byte Lengths</th>" in html_text
+    assert "<th>Build mode</th>" in html_text
+    assert "bulk_from_entries" in html_text
+    assert "insert_loop" in html_text
     assert "<th>Value Byte Lengths</th>" not in html_text
     assert "same as Map Tree std" in html_text
     assert "same than Map Tree std" not in html_text
     assert "Charts" in html_text
     assert "Unified Map Charts" in html_text
+    assert "Summary" in html_text
+    assert "Raw data" in html_text
+    assert "raw-chart-table" in html_text
     assert "Map int32: random inserts" in html_text
     assert "Allocated / entry" in html_text
     assert "Map Find Performance" in html_text

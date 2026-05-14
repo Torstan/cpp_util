@@ -209,6 +209,54 @@ void TestImtMapRandomWritesMatchStdMapAcrossTreeBackends() {
   }
 }
 
+template <typename Map>
+void RequireFromEntriesMapBehavior(const std::string& label) {
+  using Entry = std::pair<int, std::string>;
+
+  std::vector<Entry> unsorted_entries = {
+      {3, "three"},
+      {1, "one"},
+      {2, "two"},
+  };
+  const auto built = Map::FromEntries(std::move(unsorted_entries));
+  Require(built.has_value(), label + " builds from unsorted entries");
+  RequireEqual(built->Size(), std::size_t{3}, label + " size after FromEntries");
+  RequireEqual(*built->Find(1), std::string("one"), label + " finds key 1");
+  RequireEqual(*built->Find(2), std::string("two"), label + " finds key 2");
+  RequireEqual(*built->Find(3), std::string("three"), label + " finds key 3");
+  Require(built->ToVector() ==
+              std::vector<Entry>({
+                  {1, "one"},
+                  {2, "two"},
+                  {3, "three"},
+              }),
+          label + " FromEntries returns sorted vector");
+
+  std::vector<Entry> duplicate_entries = {
+      {2, "two"},
+      {1, "one"},
+      {2, "TWO"},
+  };
+  const auto duplicate = Map::FromEntries(std::move(duplicate_entries));
+  Require(!duplicate.has_value(), label + " rejects duplicate keys");
+
+  std::vector<Entry> empty_entries;
+  const auto empty = Map::FromEntries(std::move(empty_entries));
+  Require(empty.has_value(), label + " builds from empty entries");
+  Require(empty->Empty(), label + " empty FromEntries result is empty");
+}
+
+void TestImtMapFromEntriesAcrossBackends() {
+  using TreeMap = immutable_container::ImtMap<int, std::string>;
+  using BlockTree = immutable_container::ImmutableBlockTree<
+      int, std::string, std::less<int>, immutable_container::NonAtomicRefCount, 256>;
+  using BlockMap = immutable_container::ImtMap<
+      int, std::string, std::less<int>, immutable_container::NonAtomicRefCount, BlockTree>;
+
+  RequireFromEntriesMapBehavior<TreeMap>("tree-backed ImtMap::FromEntries");
+  RequireFromEntriesMapBehavior<BlockMap>("block-tree-backed ImtMap::FromEntries");
+}
+
 void TestImtSetBehavior() {
   immutable_container::ImtSet<int> set;
 
@@ -238,6 +286,34 @@ void TestImtSetBehavior() {
   Require(erased.has_value(), "ImtSet Erase existing key succeeds");
   Require(added.Contains(2), "ImtSet Erase leaves old version unchanged");
   Require(!erased->Contains(2), "ImtSet Erase removes key in new version");
+}
+
+template <typename Set>
+void RequireFromKeysSetBehavior(const std::string& label) {
+  std::vector<int> keys = {3, 1, 2, 2, 1};
+  const auto set = Set::FromKeys(std::move(keys));
+  RequireEqual(set.Size(), std::size_t{3}, label + " deduplicates keys");
+  Require(set.Contains(1), label + " contains key 1");
+  Require(set.Contains(2), label + " contains key 2");
+  Require(set.Contains(3), label + " contains key 3");
+  Require(set.ToVector() == std::vector<int>({1, 2, 3}),
+          label + " FromKeys returns sorted keys");
+
+  std::vector<int> empty_keys;
+  const auto empty = Set::FromKeys(std::move(empty_keys));
+  Require(empty.Empty(), label + " builds empty set");
+}
+
+void TestImtSetFromKeysAcrossBackends() {
+  using TreeSet = immutable_container::ImtSet<int>;
+  using BlockTree = immutable_container::ImmutableBlockTree<
+      int, immutable_container::UnitValue, std::less<int>,
+      immutable_container::NonAtomicRefCount, 256>;
+  using BlockSet = immutable_container::ImtSet<
+      int, std::less<int>, immutable_container::NonAtomicRefCount, BlockTree>;
+
+  RequireFromKeysSetBehavior<TreeSet>("tree-backed ImtSet::FromKeys");
+  RequireFromKeysSetBehavior<BlockSet>("block-tree-backed ImtSet::FromKeys");
 }
 
 void TestImtSetStringBackends() {
@@ -345,7 +421,9 @@ int main() {
     TestImtMapEmptyAndStrictUpdates();
     TestImtMapSetAndOrdering();
     TestImtMapRandomWritesMatchStdMapAcrossTreeBackends();
+    TestImtMapFromEntriesAcrossBackends();
     TestImtSetBehavior();
+    TestImtSetFromKeysAcrossBackends();
     TestImtSetStringBackends();
     TestPackedMapAndSetBackends();
     TestPackedBlockMapValueStoragePersistence();

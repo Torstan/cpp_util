@@ -287,6 +287,30 @@ void TestSplitCreatesMultipleBlocksAndStats() {
 #endif
 }
 
+void TestFromSortedUniqueEntriesBuildsValidBlockTree() {
+  using Tree = immutable_container::ImmutableBlockTree<
+      int, std::string, std::less<int>, immutable_container::NonAtomicRefCount, 256>;
+
+  std::vector<std::pair<int, std::string>> entries;
+  for (int i = 0; i < 100; ++i) {
+    entries.push_back({i, "v" + std::to_string(i)});
+  }
+
+  const Tree tree = Tree::FromSortedUniqueEntries(std::move(entries));
+  RequireEqual(tree.Size(), std::size_t{100}, "bulk block tree size");
+  Require(tree.Height() > 0, "bulk block tree has non-zero height");
+  Require(tree.DebugValidateInvariantsForTest(), "bulk block tree validates invariants");
+  RequireEqual(*tree.Find(0), std::string("v0"), "bulk block tree finds first key");
+  RequireEqual(*tree.Find(50), std::string("v50"), "bulk block tree finds middle key");
+  RequireEqual(*tree.Find(99), std::string("v99"), "bulk block tree finds last key");
+
+  const auto stats = tree.DebugStatsForTest();
+  RequireEqual(stats.entry_count, std::size_t{100},
+               "bulk block tree stats count all entries");
+  RequireEqual(stats.node_count, stats.zip_list_count,
+               "bulk block tree has one zip list per node");
+}
+
 void TestSharedNodeObservation() {
   using Tree = immutable_container::ImmutableBlockTree<int, std::string, std::less<int>,
                                                        immutable_container::NonAtomicRefCount, 64>;
@@ -603,6 +627,7 @@ int main() {
     TestAdjacentBlocksMergeAfterErase();
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestSplitCreatesMultipleBlocksAndStats();
+    TestFromSortedUniqueEntriesBuildsValidBlockTree();
     TestSharedNodeObservation();
     TestRandomizedMapModelMaintainsInvariants();
     TestPackedStringBlockTreeMapBehavior();

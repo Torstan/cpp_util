@@ -135,8 +135,8 @@ JemallocStats ReadJemallocStats();
 void FlushJemallocThreadCache();
 
 template <typename Map, typename Text>
-Map BuildMap(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
-             std::size_t value_bytes) {
+Map BuildMapInsertLoop(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
+                       std::size_t value_bytes) {
   Map map;
   for (std::size_t index : indexes) {
     std::optional<Map> next = map.Insert(MakeText<Text>(MakeStringKey(index, key_bytes)),
@@ -155,8 +155,31 @@ Map BuildMap(const std::vector<std::size_t>& indexes, std::size_t key_bytes,
   return map;
 }
 
+template <typename Map, typename Text>
+Map BuildMapBulkFromEntries(const std::vector<std::size_t>& indexes,
+                            std::size_t key_bytes, std::size_t value_bytes) {
+  std::vector<std::pair<Text, Text>> entries;
+  entries.reserve(indexes.size());
+  for (std::size_t index : indexes) {
+    entries.push_back({MakeText<Text>(MakeStringKey(index, key_bytes)),
+                       MakeText<Text>(MakeStringValue(index, value_bytes))});
+  }
+
+  std::optional<Map> map = Map::FromEntries(std::move(entries));
+  if (!map.has_value()) {
+    std::cerr << "bulk map build rejected generated entries\n";
+    std::exit(2);
+  }
+  if (map->Size() != indexes.size()) {
+    std::cerr << "map size mismatch: expected " << indexes.size() << " got "
+              << map->Size() << "\n";
+    std::exit(2);
+  }
+  return *map;
+}
+
 template <typename Map>
-Map BuildInt32Map(const std::vector<std::size_t>& indexes) {
+Map BuildInt32MapInsertLoop(const std::vector<std::size_t>& indexes) {
   Map map;
   for (std::size_t index : indexes) {
     const auto value = static_cast<std::int32_t>(index);
@@ -175,8 +198,31 @@ Map BuildInt32Map(const std::vector<std::size_t>& indexes) {
   return map;
 }
 
+template <typename Map>
+Map BuildInt32MapBulkFromEntries(const std::vector<std::size_t>& indexes) {
+  std::vector<std::pair<std::int32_t, std::int32_t>> entries;
+  entries.reserve(indexes.size());
+  for (std::size_t index : indexes) {
+    const auto value = static_cast<std::int32_t>(index);
+    entries.push_back({value, value});
+  }
+
+  std::optional<Map> map = Map::FromEntries(std::move(entries));
+  if (!map.has_value()) {
+    std::cerr << "bulk int32 map build rejected generated entries\n";
+    std::exit(2);
+  }
+  if (map->Size() != indexes.size()) {
+    std::cerr << "map size mismatch: expected " << indexes.size() << " got "
+              << map->Size() << "\n";
+    std::exit(2);
+  }
+  return *map;
+}
+
 template <typename Set, typename Text>
-Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
+Set BuildSetInsertLoop(const std::vector<std::size_t>& indexes,
+                       std::size_t key_bytes) {
   Set set;
   for (std::size_t index : indexes) {
     std::optional<Set> next = set.Insert(MakeText<Text>(MakeStringKey(index, key_bytes)));
@@ -194,6 +240,24 @@ Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
   return set;
 }
 
+template <typename Set, typename Text>
+Set BuildSetBulkFromKeys(const std::vector<std::size_t>& indexes,
+                         std::size_t key_bytes) {
+  std::vector<Text> keys;
+  keys.reserve(indexes.size());
+  for (std::size_t index : indexes) {
+    keys.push_back(MakeText<Text>(MakeStringKey(index, key_bytes)));
+  }
+
+  Set set = Set::FromKeys(std::move(keys));
+  if (set.Size() != indexes.size()) {
+    std::cerr << "set size mismatch: expected " << indexes.size() << " got "
+              << set.Size() << "\n";
+    std::exit(2);
+  }
+  return set;
+}
+
 [[maybe_unused]] void PrintEnvRow() {
   std::cout << "env,benchmark=immutable_tree_vs_block_tree_string,allocator=jemalloc"
             << ",api=ImtMap|ImtSet,key_types=std::string|PackedString"
@@ -201,7 +265,8 @@ Set BuildSet(const std::vector<std::size_t>& indexes, std::size_t key_bytes) {
             << ",value_bytes=64|128|256|1024|4,set_value_bytes=0"
             << ",key_pattern=key_<zero-padded-index>,value_pattern=value_<zero-padded-index>_<letters>"
             << ",sizes=1|10|100|1000|10000|100000"
-            << ",patterns=sorted|random\n";
+            << ",patterns=sorted|random"
+            << ",build_modes=sorted:bulk_from_entries|random:insert_loop\n";
 }
 
 void PrintDebugStatsBlanks(std::ostream& os) {
@@ -258,8 +323,14 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   RefreshJemallocEpoch();
   const JemallocStats start_stats = ReadJemallocStats();
   Map map;
+  const bool use_bulk_build = pattern == "sorted";
+  const char* build_mode = use_bulk_build ? "bulk_from_entries" : "insert_loop";
   const long long build_us = TimeMicros([&] {
-    map = BuildMap<Map, Text>(indexes, key_bytes, value_bytes);
+    if (use_bulk_build) {
+      map = BuildMapBulkFromEntries<Map, Text>(indexes, key_bytes, value_bytes);
+    } else {
+      map = BuildMapInsertLoop<Map, Text>(indexes, key_bytes, value_bytes);
+    }
   });
   FlushJemallocThreadCache();
   RefreshJemallocEpoch();
@@ -358,6 +429,7 @@ void RunCase(const std::string& name, const std::string& pattern, std::size_t si
   std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
             << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
             << ",repetitions=" << repetitions << ",height=" << map.Height()
+            << ",build_mode=" << build_mode
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
             << ",miss_contains_us=" << miss_contains_us << ",find_hit_us=" << find_hit_us
             << ",find_miss_us=" << find_miss_us
@@ -392,7 +464,15 @@ void RunInt32Case(const std::string& name, const std::string& pattern, std::size
   RefreshJemallocEpoch();
   const JemallocStats start_stats = ReadJemallocStats();
   Map map;
-  const long long build_us = TimeMicros([&] { map = BuildInt32Map<Map>(indexes); });
+  const bool use_bulk_build = pattern == "sorted";
+  const char* build_mode = use_bulk_build ? "bulk_from_entries" : "insert_loop";
+  const long long build_us = TimeMicros([&] {
+    if (use_bulk_build) {
+      map = BuildInt32MapBulkFromEntries<Map>(indexes);
+    } else {
+      map = BuildInt32MapInsertLoop<Map>(indexes);
+    }
+  });
   FlushJemallocThreadCache();
   RefreshJemallocEpoch();
   const JemallocStats after_build_stats = ReadJemallocStats();
@@ -489,6 +569,7 @@ void RunInt32Case(const std::string& name, const std::string& pattern, std::size
   std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
             << ",key_bytes=" << key_bytes << ",value_bytes=" << value_bytes
             << ",repetitions=" << repetitions << ",height=" << map.Height()
+            << ",build_mode=" << build_mode
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
             << ",miss_contains_us=" << miss_contains_us << ",find_hit_us=" << find_hit_us
             << ",find_miss_us=" << find_miss_us
@@ -517,8 +598,14 @@ void RunSetCase(const std::string& name, const std::string& pattern, std::size_t
   RefreshJemallocEpoch();
   const JemallocStats start_stats = ReadJemallocStats();
   Set set;
+  const bool use_bulk_build = pattern == "sorted";
+  const char* build_mode = use_bulk_build ? "bulk_from_entries" : "insert_loop";
   const long long build_us = TimeMicros([&] {
-    set = BuildSet<Set, Text>(indexes, key_bytes);
+    if (use_bulk_build) {
+      set = BuildSetBulkFromKeys<Set, Text>(indexes, key_bytes);
+    } else {
+      set = BuildSetInsertLoop<Set, Text>(indexes, key_bytes);
+    }
   });
   FlushJemallocThreadCache();
   RefreshJemallocEpoch();
@@ -565,6 +652,7 @@ void RunSetCase(const std::string& name, const std::string& pattern, std::size_t
   std::cout << "case,name=" << name << ",pattern=" << pattern << ",size=" << size
             << ",key_bytes=" << key_bytes << ",value_bytes=0"
             << ",repetitions=" << repetitions << ",height=" << set.Height()
+            << ",build_mode=" << build_mode
             << ",build_us=" << build_us << ",hit_contains_us=" << hit_contains_us
             << ",miss_contains_us=" << miss_contains_us << ",to_vector_us=" << to_vector_us;
   PrintMemoryFields(start_stats, after_build_stats);

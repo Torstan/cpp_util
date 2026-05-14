@@ -91,6 +91,30 @@ void TestEmptyAndFromSorted() {
           "ToVector preserves sorted entries");
 }
 
+void TestGenericPackSortedEntriesIntoBlocks() {
+  using ZipList = immutable_container::ZipList<int, std::string, 128>;
+  std::vector<ZipList::Entry> entries;
+  const std::size_t total_entries = ZipList::DefaultCapacity() * 2 + 3;
+  for (std::size_t i = 0; i < total_entries; ++i) {
+    entries.push_back({static_cast<int>(i), "v" + std::to_string(i)});
+  }
+
+  const auto blocks = ZipList::PackSortedEntriesIntoBlocks(std::move(entries));
+  std::size_t total = 0;
+  int expected_key = 0;
+  for (const auto& block : blocks) {
+    Require(block.Count() > 0, "packed generic block is not empty");
+    Require(block.Count() <= ZipList::DefaultCapacity(),
+            "packed generic block respects capacity");
+    for (std::size_t i = 0; i < block.Count(); ++i) {
+      RequireEqual(block[i].first, expected_key, "packed generic key order");
+      ++expected_key;
+    }
+    total += block.Count();
+  }
+  RequireEqual(total, total_entries, "packed generic total entry count");
+}
+
 void TestGenericAccessors() {
   using ZipList = immutable_container::ZipList<int, std::string, 256>;
   const auto block = ZipList::FromSortedEntries({
@@ -234,6 +258,29 @@ void TestPackedStringMapZipList() {
   const auto vector = erased.ToVector();
   Require(vector.size() == erased.Count(), "packed map ToVector size");
   Require(vector[0].first == Ps("alpha"), "packed map ToVector first key");
+}
+
+void TestPackedMapPackSortedEntriesIntoBlocks() {
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 512>;
+
+  std::vector<ZipList::Entry> entries;
+  for (int i = 0; i < 40; ++i) {
+    const std::string key = "key_" + std::string(28, '0') + std::to_string(i);
+    const std::string value =
+        "value_" + std::string(58, static_cast<char>('a' + i % 26));
+    entries.push_back({PackedString(key), PackedString(value)});
+  }
+
+  const auto blocks = ZipList::PackSortedEntriesIntoBlocks(std::move(entries));
+  std::size_t total = 0;
+  for (const auto& block : blocks) {
+    Require(block.Count() > 0, "packed map block is not empty");
+    Require(block.Count() <= ZipList::DefaultCapacity(),
+            "packed map block respects default capacity");
+    total += block.Count();
+  }
+  RequireEqual(total, std::size_t{40}, "packed map block total entry count");
 }
 
 void TestPackedStringMapPayloadBudgetAndLifetime() {
@@ -601,11 +648,13 @@ void TestPackedStringSetPayloadBudgetAndLifetime() {
 int main() {
   try {
     TestEmptyAndFromSorted();
+    TestGenericPackSortedEntriesIntoBlocks();
     TestGenericAccessors();
     TestCopyWithInsertUpdateErase();
     TestSplitAndMerge();
     TestObjectLifetimeAndLargeEntry();
     TestPackedStringMapZipList();
+    TestPackedMapPackSortedEntriesIntoBlocks();
     TestPackedStringMapPayloadBudgetAndLifetime();
     TestPackedMapZipListMetadataBudget();
     TestPackedMapZipListCompactKeyRefsAndStableValues();
