@@ -109,6 +109,8 @@ class ZipList {
 
   const Key& KeyAt(std::size_t index) const { return (*this)[index].first; }
 
+  const Key& KeyAtTransient(std::size_t index) const { return KeyAt(index); }
+
   const Value& ValueAt(std::size_t index) const { return (*this)[index].second; }
 
   template <typename Comp>
@@ -311,11 +313,11 @@ class ZipList {
   }
 
   Entry* EntryAt(std::size_t index) {
-    return reinterpret_cast<Entry*>(&entries_[index]);
+    return std::launder(reinterpret_cast<Entry*>(&entries_[index]));
   }
 
   const Entry* EntryAt(std::size_t index) const {
-    return reinterpret_cast<const Entry*>(&entries_[index]);
+    return std::launder(reinterpret_cast<const Entry*>(&entries_[index]));
   }
 
   void ConstructBack(const Entry& entry) {
@@ -400,7 +402,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
 
   ZipList(const ZipList& other) { CopyFrom(other); }
 
-  ZipList(ZipList&& other) { MoveFrom(&other); }
+  ZipList(ZipList&& other) noexcept { MoveFrom(&other); }
 
   ZipList& operator=(const ZipList& other) {
     if (this == &other) {
@@ -411,7 +413,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     return *this;
   }
 
-  ZipList& operator=(ZipList&& other) {
+  ZipList& operator=(ZipList&& other) noexcept {
     if (this == &other) {
       return *this;
     }
@@ -465,7 +467,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     }
     FitSummary summary;
     for (std::size_t i = 0; i < count_; ++i) {
-      if (!AccumulateKey(KeyAt(i), &summary)) {
+      if (!AccumulateKey(BorrowedKeyAt(i), &summary)) {
         return false;
       }
     }
@@ -487,7 +489,9 @@ class ZipList<PackedString, PackedString, TargetBytes> {
 
   Key BackKey() const { return KeyAt(count_ - 1); }
 
-  Key KeyAt(std::size_t index) const { return BorrowedKeyAt(index); }
+  Key KeyAt(std::size_t index) const { return OwnedKeyAt(index); }
+
+  Key KeyAtTransient(std::size_t index) const { return BorrowedKeyAt(index); }
 
   const Value& ValueAt(std::size_t index) const { return *ValueSlot(index); }
 
@@ -498,7 +502,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     while (length > 0) {
       const std::size_t half = length / 2;
       const std::size_t middle = first + half;
-      if (comp(KeyAt(middle), key)) {
+      if (comp(BorrowedKeyAt(middle), key)) {
         first = middle + 1;
         length -= half + 1;
       } else {
@@ -514,7 +518,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     if (index == count_) {
       return nullptr;
     }
-    const Key found_key = KeyAt(index);
+    const Key found_key = BorrowedKeyAt(index);
     if (comp(key, found_key) || comp(found_key, key)) {
       return nullptr;
     }
@@ -541,11 +545,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     const std::size_t value_inline_budget =
         ValueInlineBudgetForKeyBytes(payload_used_ + InlineKeyBytes(key));
     for (std::size_t i = 0; i < index; ++i) {
-      result.ConstructBack(KeyAt(i), ValueAt(i), value_inline_budget);
+      result.ConstructBack(BorrowedKeyAt(i), ValueAt(i), value_inline_budget);
     }
     result.ConstructBack(key, value, value_inline_budget);
     for (std::size_t i = index; i < count_; ++i) {
-      result.ConstructBack(KeyAt(i), ValueAt(i), value_inline_budget);
+      result.ConstructBack(BorrowedKeyAt(i), ValueAt(i), value_inline_budget);
     }
     return result;
   }
@@ -562,7 +566,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     const std::size_t value_inline_budget =
         ValueInlineBudgetForKeyBytes(payload_used_);
     for (std::size_t i = 0; i < count_; ++i) {
-      result.ConstructBack(KeyAt(i), i == index ? value : ValueAt(i),
+      result.ConstructBack(BorrowedKeyAt(i), i == index ? value : ValueAt(i),
                            value_inline_budget);
     }
     return result;
@@ -577,7 +581,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     std::vector<Entry> entries;
     entries.reserve(count_);
     for (std::size_t i = 0; i < count_; ++i) {
-      entries.push_back({KeyAt(i), i == index ? value : ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), i == index ? value : ValueAt(i)});
     }
 
     for (std::size_t split = 1; split < entries.size(); ++split) {
@@ -601,7 +605,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     std::vector<Entry> entries;
     entries.reserve(count_);
     for (std::size_t i = 0; i < count_; ++i) {
-      entries.push_back({KeyAt(i), i == index ? value : ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), i == index ? value : ValueAt(i)});
     }
     return PackEntriesIntoBlocks(std::move(entries));
   }
@@ -618,7 +622,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
         ValueInlineBudgetForKeyBytes(payload_used_ - erased_key_bytes);
     for (std::size_t i = 0; i < count_; ++i) {
       if (i != index) {
-        result.ConstructBack(KeyAt(i), ValueAt(i), value_inline_budget);
+        result.ConstructBack(BorrowedKeyAt(i), ValueAt(i), value_inline_budget);
       }
     }
     return result;
@@ -633,11 +637,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     std::vector<Entry> entries;
     entries.reserve(count_ + 1);
     for (std::size_t i = 0; i < index; ++i) {
-      entries.push_back({KeyAt(i), ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), ValueAt(i)});
     }
     entries.push_back({key, value});
     for (std::size_t i = index; i < count_; ++i) {
-      entries.push_back({KeyAt(i), ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), ValueAt(i)});
     }
 
     for (std::size_t split = 1; split < entries.size(); ++split) {
@@ -661,11 +665,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     std::vector<Entry> entries;
     entries.reserve(count_ + 1);
     for (std::size_t i = 0; i < index; ++i) {
-      entries.push_back({KeyAt(i), ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), ValueAt(i)});
     }
     entries.push_back({key, value});
     for (std::size_t i = index; i < count_; ++i) {
-      entries.push_back({KeyAt(i), ValueAt(i)});
+      entries.push_back({OwnedKeyAt(i), ValueAt(i)});
     }
     return PackEntriesIntoBlocks(std::move(entries));
   }
@@ -673,12 +677,12 @@ class ZipList<PackedString, PackedString, TargetBytes> {
   static bool CanMerge(const ZipList& left, const ZipList& right) {
     FitSummary summary;
     for (std::size_t i = 0; i < left.Count(); ++i) {
-      if (!AccumulateKey(left.KeyAt(i), &summary)) {
+      if (!AccumulateKey(left.BorrowedKeyAt(i), &summary)) {
         return false;
       }
     }
     for (std::size_t i = 0; i < right.Count(); ++i) {
-      if (!AccumulateKey(right.KeyAt(i), &summary)) {
+      if (!AccumulateKey(right.BorrowedKeyAt(i), &summary)) {
         return false;
       }
     }
@@ -694,10 +698,10 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     const std::size_t value_inline_budget =
         ValueInlineBudgetForKeyBytes(left.payload_used_ + right.payload_used_);
     for (std::size_t i = 0; i < left.Count(); ++i) {
-      result.ConstructBack(left.KeyAt(i), left.ValueAt(i), value_inline_budget);
+      result.ConstructBack(left.BorrowedKeyAt(i), left.ValueAt(i), value_inline_budget);
     }
     for (std::size_t i = 0; i < right.Count(); ++i) {
-      result.ConstructBack(right.KeyAt(i), right.ValueAt(i), value_inline_budget);
+      result.ConstructBack(right.BorrowedKeyAt(i), right.ValueAt(i), value_inline_budget);
     }
     return result;
   }
@@ -752,12 +756,14 @@ class ZipList<PackedString, PackedString, TargetBytes> {
                 "ZipList packed map payload must fit uint16_t key refs");
 
   Value* ValueSlot(std::size_t index) {
-    return reinterpret_cast<Value*>(&value_storage_[index]);
+    return std::launder(reinterpret_cast<Value*>(&value_storage_[index]));
   }
 
   const Value* ValueSlot(std::size_t index) const {
-    return reinterpret_cast<const Value*>(&value_storage_[index]);
+    return std::launder(reinterpret_cast<const Value*>(&value_storage_[index]));
   }
+
+  void* RawValueSlot(std::size_t index) { return &value_storage_[index]; }
 
   std::size_t RemainingPayload() const {
     return kPayloadBytes - payload_used_ - value_payload_used_;
@@ -913,11 +919,11 @@ class ZipList<PackedString, PackedString, TargetBytes> {
           static_cast<std::uint16_t>(value_payload_used_ + value.Size());
       char* value_data = payload_ + kPayloadBytes - value_payload_used_;
       std::memcpy(value_data, value.Data(), value.Size());
-      new (ValueSlot(count_)) Value(Value::Borrowed(value_data, value.Size()));
+      new (RawValueSlot(count_)) Value(Value::Borrowed(value_data, value.Size()));
       return;
     }
 
-    new (ValueSlot(count_)) Value(std::forward<Text>(value));
+    new (RawValueSlot(count_)) Value(std::forward<Text>(value));
     if (ValueSlot(count_)->Size() > PackedString::kInlineCapacity) {
       ++external_value_count_;
     }
@@ -956,7 +962,7 @@ class ZipList<PackedString, PackedString, TargetBytes> {
       const std::size_t value_inline_budget =
           ValueInlineBudgetForKeyBytes(other.payload_used_);
       for (std::size_t i = 0; i < other.count_; ++i) {
-        ConstructBack(other.KeyAt(i), other.ValueAt(i), value_inline_budget);
+        ConstructBack(other.BorrowedKeyAt(i), other.ValueAt(i), value_inline_budget);
       }
     } catch (...) {
       Clear();
@@ -964,18 +970,44 @@ class ZipList<PackedString, PackedString, TargetBytes> {
     }
   }
 
-  void MoveFrom(ZipList* other) {
-    try {
-      const std::size_t value_inline_budget =
-          ValueInlineBudgetForKeyBytes(other->payload_used_);
-      for (std::size_t i = 0; i < other->count_; ++i) {
-        ConstructBack(other->KeyAt(i), other->ValueAt(i), value_inline_budget);
-      }
-    } catch (...) {
-      Clear();
-      throw;
+  bool PointerBelongsToPayload(const char* data) const noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    const auto begin = reinterpret_cast<std::uintptr_t>(payload_);
+    const auto end = begin + kPayloadBytes;
+    return address >= begin && address <= end;
+  }
+
+  void MoveValueFrom(ZipList* other, std::size_t index) noexcept {
+    Value* source = other->ValueSlot(index);
+    if (source->IsBorrowed() && other->PointerBelongsToPayload(source->Data())) {
+      const std::size_t offset =
+          static_cast<std::size_t>(source->Data() - other->payload_);
+      new (RawValueSlot(index)) Value(Value::Borrowed(payload_ + offset, source->Size()));
+      source->~Value();
+      return;
     }
-    other->Clear();
+
+    new (RawValueSlot(index)) Value(std::move(*source));
+    source->~Value();
+  }
+
+  void MoveFrom(ZipList* other) noexcept {
+    std::memcpy(key_refs_, other->key_refs_, sizeof(key_refs_));
+    std::memcpy(payload_, other->payload_, sizeof(payload_));
+    count_ = other->count_;
+    payload_used_ = other->payload_used_;
+    value_payload_used_ = other->value_payload_used_;
+    external_value_count_ = other->external_value_count_;
+    external_keys_ = std::move(other->external_keys_);
+
+    for (std::size_t i = 0; i < count_; ++i) {
+      MoveValueFrom(other, i);
+    }
+
+    other->count_ = 0;
+    other->payload_used_ = 0;
+    other->value_payload_used_ = 0;
+    other->external_value_count_ = 0;
   }
 
   void Clear() noexcept {
@@ -1052,7 +1084,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
 
   ZipList(const ZipList& other) { CopyFrom(other); }
 
-  ZipList(ZipList&& other) { MoveFrom(&other); }
+  ZipList(ZipList&& other) noexcept { MoveFrom(&other); }
 
   ZipList& operator=(const ZipList& other) {
     if (this == &other) {
@@ -1063,7 +1095,7 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     return *this;
   }
 
-  ZipList& operator=(ZipList&& other) {
+  ZipList& operator=(ZipList&& other) noexcept {
     if (this == &other) {
       return *this;
     }
@@ -1133,6 +1165,8 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
   const Key& BackKey() const { return KeyAt(count_ - 1); }
 
   const Key& KeyAt(std::size_t index) const { return *KeySlot(index); }
+
+  const Key& KeyAtTransient(std::size_t index) const { return KeyAt(index); }
 
   const Value& ValueAt(std::size_t index) const {
     (void)index;
@@ -1372,12 +1406,14 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
   static constexpr std::size_t kPayloadBytes = ComputePayloadBytes();
 
   Key* KeySlot(std::size_t index) {
-    return reinterpret_cast<Key*>(&key_storage_[index]);
+    return std::launder(reinterpret_cast<Key*>(&key_storage_[index]));
   }
 
   const Key* KeySlot(std::size_t index) const {
-    return reinterpret_cast<const Key*>(&key_storage_[index]);
+    return std::launder(reinterpret_cast<const Key*>(&key_storage_[index]));
   }
+
+  void* RawKeySlot(std::size_t index) { return &key_storage_[index]; }
 
   std::size_t RemainingPayload() const { return kPayloadBytes - payload_used_; }
 
@@ -1475,11 +1511,11 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     }
 
     if (UsesExternalPayload(key)) {
-      new (KeySlot(count_)) Key(std::forward<NodeKey>(key));
+      new (RawKeySlot(count_)) Key(std::forward<NodeKey>(key));
     } else {
       const std::string_view key_view = StoreBytes(key);
       Key key_ref = Key::Borrowed(key_view.data(), key_view.size());
-      new (KeySlot(count_)) Key(std::move(key_ref));
+      new (RawKeySlot(count_)) Key(std::move(key_ref));
     }
     ++count_;
   }
@@ -1495,16 +1531,38 @@ class ZipList<PackedString, UnitValue, TargetBytes> {
     }
   }
 
-  void MoveFrom(ZipList* other) {
-    try {
-      for (std::size_t i = 0; i < other->count_; ++i) {
-        ConstructBack(other->KeyAt(i));
-      }
-    } catch (...) {
-      Clear();
-      throw;
+  bool PointerBelongsToPayload(const char* data) const noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    const auto begin = reinterpret_cast<std::uintptr_t>(payload_);
+    const auto end = begin + kPayloadBytes;
+    return address >= begin && address <= end;
+  }
+
+  void MoveKeyFrom(ZipList* other, std::size_t index) noexcept {
+    Key* source = other->KeySlot(index);
+    if (source->IsBorrowed() && other->PointerBelongsToPayload(source->Data())) {
+      const std::size_t offset =
+          static_cast<std::size_t>(source->Data() - other->payload_);
+      new (RawKeySlot(index)) Key(Key::Borrowed(payload_ + offset, source->Size()));
+      source->~Key();
+      return;
     }
-    other->Clear();
+
+    new (RawKeySlot(index)) Key(std::move(*source));
+    source->~Key();
+  }
+
+  void MoveFrom(ZipList* other) noexcept {
+    std::memcpy(payload_, other->payload_, sizeof(payload_));
+    count_ = other->count_;
+    payload_used_ = other->payload_used_;
+
+    for (std::size_t i = 0; i < count_; ++i) {
+      MoveKeyFrom(other, i);
+    }
+
+    other->count_ = 0;
+    other->payload_used_ = 0;
   }
 
   void Clear() noexcept {

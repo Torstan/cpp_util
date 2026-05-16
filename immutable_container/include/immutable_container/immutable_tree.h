@@ -68,6 +68,7 @@ class ImmutableTree {
 
   static ImmutableTree FromSortedUniqueEntries(std::vector<Entry> entries,
                                                Comp comp = Comp{}) {
+    ValidateSortedUniqueEntries(entries, comp);
     NodePtr root = BuildBalancedFromSorted(&entries, 0, entries.size());
     return ImmutableTree(std::move(root), std::move(comp));
   }
@@ -161,6 +162,18 @@ class ImmutableTree {
   static std::size_t Size(const NodePtr& node) { return node ? node->size : 0; }
 
   bool Less(const Key& lhs, const Key& rhs) const { return comp_(lhs, rhs); }
+
+  static void ValidateSortedUniqueEntries(const std::vector<Entry>& entries,
+                                          const Comp& comp) {
+    for (std::size_t index = 1; index < entries.size(); ++index) {
+      const Key& previous = entries[index - 1].first;
+      const Key& current = entries[index].first;
+      if (!comp(previous, current)) {
+        throw std::invalid_argument(
+            "ImmutableTree entries must be sorted and unique");
+      }
+    }
+  }
 
   template <typename NodeKey, typename NodeValue>
   static NodePtr MakeNode(NodeKey&& key, NodeValue&& value, NodePtr left,

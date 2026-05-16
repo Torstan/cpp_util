@@ -185,7 +185,12 @@ class PackedString {
     return static_cast<std::uint8_t>(mode);
   }
 
-  Mode ModeValue() const noexcept { return static_cast<Mode>(storage_.raw[15]); }
+  Mode ModeValue() const noexcept {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&storage_);
+    return static_cast<Mode>(bytes[15]);
+  }
+
+  bool IsBorrowed() const noexcept { return ModeValue() == Mode::kBorrowed; }
 
   bool IsShort() const noexcept { return ModeValue() == Mode::kShort; }
 

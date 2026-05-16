@@ -38,12 +38,22 @@ the key and does not mutate the receiver.
 `ImmutableTree<Key, Value, Comp, RefCountPolicy>` remains available as the
 lower-level persistent AVL ordered tree used by `ImtMap` and `ImtSet`.
 
+`ImmutableTree::FromSortedUniqueEntries(entries, comp)` is a bulk-build helper.
+Its input must already be strictly sorted by `comp` with no equivalent keys. It
+throws `std::invalid_argument` if adjacent entries are not strictly increasing.
+Use `ImtMap::FromEntries()` or `ImtSet::FromKeys()` when the input may be
+unsorted or duplicated.
+
 ## Experimental ImmutableBlockTree
 
 `ImmutableBlockTree<Key, Value, Comp, RefCountPolicy, TargetBlockBytes>` is an
 experimental persistent ordered tree that stores multiple sorted entries per AVL
 node. It is available for measurement and iteration, but it does not replace
 `ImmutableTree`, `ImtMap`, or `ImtSet`.
+
+`ImmutableBlockTree::FromSortedUniqueEntries(entries, comp)` has the same
+strictly sorted and unique input contract as `ImmutableTree`; it throws
+`std::invalid_argument` when the contract is violated.
 
 The benchmark target compares the current single-entry `ImmutableTree` against
 2048-byte and 4096-byte `ImmutableBlockTree` configurations for sorted and
