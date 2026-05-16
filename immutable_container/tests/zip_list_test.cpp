@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -433,6 +434,39 @@ void TestPackedMapZipListCompactKeyRefsAndStableValues() {
           "compact packed map move finds external key value");
 }
 
+void TestPackedMapPublicKeyAccessorsReturnOwningValues() {
+  using PackedString = immutable_container::PackedString;
+  using ZipList = immutable_container::ZipList<PackedString, PackedString, 512>;
+
+  PackedString key_at;
+  PackedString front_key;
+  PackedString back_key;
+  PackedString entry_key;
+
+  {
+    auto* block = new ZipList(ZipList::FromSortedEntries({
+        {RepeatedPacked('a', 80), Ps("value-a")},
+        {RepeatedPacked('b', 80), Ps("value-b")},
+    }));
+
+    key_at = block->KeyAt(0);
+    front_key = block->FrontKey();
+    back_key = block->BackKey();
+    entry_key = (*block)[1].first;
+
+    delete block;
+  }
+
+  Require(key_at == RepeatedPacked('a', 80),
+          "packed map KeyAt returns an owning value");
+  Require(front_key == RepeatedPacked('a', 80),
+          "packed map FrontKey returns an owning value");
+  Require(back_key == RepeatedPacked('b', 80),
+          "packed map BackKey returns an owning value");
+  Require(entry_key == RepeatedPacked('b', 80),
+          "packed map operator[] returns an owning key");
+}
+
 void TestPackedMapZipListValueStorageStrategy() {
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   using PackedString = immutable_container::PackedString;
@@ -520,6 +554,60 @@ void TestPackedMapZipListBorrowedValueCopyMoveUpdateRegression() {
               RepeatedPacked('y', 64),
           "packed map update leaves previous borrowed value version unchanged");
 #endif
+}
+
+void TestPackedZipListMoveOperationsAreNoexcept() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+  using PackedMapZipList =
+      immutable_container::ZipList<PackedString, PackedString, 4096>;
+  using PackedSetZipList =
+      immutable_container::ZipList<PackedString, UnitValue, 4096>;
+
+  Require(std::is_nothrow_move_constructible<PackedMapZipList>::value,
+          "packed map ZipList move constructor is noexcept");
+  Require(std::is_nothrow_move_assignable<PackedMapZipList>::value,
+          "packed map ZipList move assignment is noexcept");
+  Require(std::is_nothrow_move_constructible<PackedSetZipList>::value,
+          "packed set ZipList move constructor is noexcept");
+  Require(std::is_nothrow_move_assignable<PackedSetZipList>::value,
+          "packed set ZipList move assignment is noexcept");
+}
+
+void TestPackedZipListMoveRebasesBorrowedPayloadPointers() {
+  using PackedString = immutable_container::PackedString;
+  using UnitValue = immutable_container::UnitValue;
+  using PackedMapZipList =
+      immutable_container::ZipList<PackedString, PackedString, 4096>;
+  using PackedSetZipList =
+      immutable_container::ZipList<PackedString, UnitValue, 4096>;
+
+  PackedMapZipList moved_map;
+  {
+    auto* source = new PackedMapZipList(PackedMapZipList::FromSortedEntries({
+        {RepeatedPacked('a', 32), RepeatedPacked('x', 64)},
+        {RepeatedPacked('b', 32), RepeatedPacked('y', 64)},
+    }));
+    moved_map = std::move(*source);
+    delete source;
+  }
+  Require(*moved_map.FindValue(RepeatedPacked('b', 32),
+                               std::less<PackedString>()) ==
+              RepeatedPacked('y', 64),
+          "packed map move rebases borrowed value payload pointers");
+
+  PackedSetZipList moved_set;
+  {
+    auto* source = new PackedSetZipList(PackedSetZipList::FromSortedEntries({
+        {RepeatedPacked('a', 64), UnitValue{}},
+        {RepeatedPacked('b', 64), UnitValue{}},
+    }));
+    moved_set = std::move(*source);
+    delete source;
+  }
+  Require(moved_set.FindValue(RepeatedPacked('b', 64),
+                              std::less<PackedString>()) != nullptr,
+          "packed set move rebases borrowed key payload pointers");
 }
 
 void TestPackedStringSetZipList() {
@@ -658,9 +746,12 @@ int main() {
     TestPackedStringMapPayloadBudgetAndLifetime();
     TestPackedMapZipListMetadataBudget();
     TestPackedMapZipListCompactKeyRefsAndStableValues();
+    TestPackedMapPublicKeyAccessorsReturnOwningValues();
     TestPackedMapZipListValueStorageStrategy();
     TestPackedMapZipListLargeValuesStillWork();
     TestPackedMapZipListBorrowedValueCopyMoveUpdateRegression();
+    TestPackedZipListMoveOperationsAreNoexcept();
+    TestPackedZipListMoveRebasesBorrowedPayloadPointers();
     TestPackedStringSetZipList();
     TestPackedStringSetPayloadBudgetAndLifetime();
     std::cout << "zip_list_test passed\n";

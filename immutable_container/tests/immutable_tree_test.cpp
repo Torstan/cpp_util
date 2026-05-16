@@ -24,6 +24,16 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+template <typename Func>
+void RequireThrowsInvalidArgument(Func func, const std::string& message) {
+  try {
+    func();
+  } catch (const std::invalid_argument&) {
+    return;
+  }
+  throw std::runtime_error(message);
+}
+
 immutable_container::ImmutableTree<int, std::string> BuildTree(
     const std::vector<std::pair<int, std::string>>& values) {
   immutable_container::ImmutableTree<int, std::string> tree;
@@ -220,6 +230,28 @@ void TestFromSortedUniqueEntriesBuildsBalancedTree() {
   RequireEqual(values.back().first, 15, "bulk tree vector last key");
 }
 
+void TestFromSortedUniqueEntriesRejectsInvalidInput() {
+  using Tree = immutable_container::ImmutableTree<int, std::string>;
+
+  RequireThrowsInvalidArgument(
+      [] {
+        Tree::FromSortedUniqueEntries({
+            {2, "two"},
+            {1, "one"},
+        });
+      },
+      "bulk tree rejects unsorted entries");
+
+  RequireThrowsInvalidArgument(
+      [] {
+        Tree::FromSortedUniqueEntries({
+            {1, "one"},
+            {1, "ONE"},
+        });
+      },
+      "bulk tree rejects duplicate entries");
+}
+
 void TestSharedNodeObservation() {
   const auto tree = BuildTree({
       {4, "four"},
@@ -312,6 +344,7 @@ int main() {
     TestEraseCreatesNewVersions();
     TestAvlBalancingForSortedInput();
     TestFromSortedUniqueEntriesBuildsBalancedTree();
+    TestFromSortedUniqueEntriesRejectsInvalidInput();
     TestSharedNodeObservation();
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestPackedStringTreeNodeLayoutBudget();

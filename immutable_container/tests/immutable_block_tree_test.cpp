@@ -27,6 +27,16 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+template <typename Func>
+void RequireThrowsInvalidArgument(Func func, const std::string& message) {
+  try {
+    func();
+  } catch (const std::invalid_argument&) {
+    return;
+  }
+  throw std::runtime_error(message);
+}
+
 immutable_container::PackedString Pbs(std::string_view text) {
   return immutable_container::PackedString(text);
 }
@@ -309,6 +319,29 @@ void TestFromSortedUniqueEntriesBuildsValidBlockTree() {
                "bulk block tree stats count all entries");
   RequireEqual(stats.node_count, stats.zip_list_count,
                "bulk block tree has one zip list per node");
+}
+
+void TestFromSortedUniqueEntriesRejectsInvalidInput() {
+  using Tree = immutable_container::ImmutableBlockTree<
+      int, std::string, std::less<int>, immutable_container::NonAtomicRefCount, 256>;
+
+  RequireThrowsInvalidArgument(
+      [] {
+        Tree::FromSortedUniqueEntries({
+            {2, "two"},
+            {1, "one"},
+        });
+      },
+      "bulk block tree rejects unsorted entries");
+
+  RequireThrowsInvalidArgument(
+      [] {
+        Tree::FromSortedUniqueEntries({
+            {1, "one"},
+            {1, "ONE"},
+        });
+      },
+      "bulk block tree rejects duplicate entries");
 }
 
 void TestSharedNodeObservation() {
@@ -628,6 +661,7 @@ int main() {
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestSplitCreatesMultipleBlocksAndStats();
     TestFromSortedUniqueEntriesBuildsValidBlockTree();
+    TestFromSortedUniqueEntriesRejectsInvalidInput();
     TestSharedNodeObservation();
     TestRandomizedMapModelMaintainsInvariants();
     TestPackedStringBlockTreeMapBehavior();
