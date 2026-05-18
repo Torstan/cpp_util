@@ -75,6 +75,73 @@ make bench-jemalloc
 The jemalloc mode adds `jemalloc,label=...` rows with allocated, active, and
 resident byte summaries.
 
+## Benchmark Report Summary
+
+The generated report at `reports/immutable_tree_vs_block_tree.html` compares
+`ImmutableTree` with 2048-byte and 4096-byte `ImmutableBlockTree` variants. Its
+main result is that block trees often reduce memory and improve lookup or
+iteration latency, but random insert-loop builds are much slower than the
+single-entry tree. Sorted bulk builds are the intended favorable path for block
+trees.
+
+For the report's target case, `ImtMap<PackedString, PackedString>` with sorted
+input, 32-byte keys, 64-byte values, and 100,000 entries, the block-tree
+variants reduce allocated memory by about 25-27%. The trade-off is build time:
+the 2048-byte block version is 92.1% slower to build than the tree, and the
+4096-byte block version is 144.7% slower. Lookup and iteration are mixed but
+often favorable: Block 2048 has hit lookup 7.2% faster, miss lookup 13.3%
+faster, and `ToVector()` 34.1% faster than the tree; Block 4096 has hit lookup
+6.7% slower, miss lookup 14.6% faster, and `ToVector()` 36.0% faster.
+
+| Implementation | Build mode | Build | Allocated | Allocated / entry | Height | Nodes | Average fill |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Map Tree Packed | `bulk_from_entries` | 44.72 ms | 15.26 MiB | 160.00 B | 17 | - | - |
+| Map Block 2048 Packed | `bulk_from_entries` | 85.92 ms | 11.41 MiB | 119.65 B | 13 | 4,348 | 1.000 |
+| Map Block 4096 Packed | `bulk_from_entries` | 109.45 ms | 11.19 MiB | 117.36 B | 12 | 2,084 | 1.000 |
+
+Allocated bytes per entry, lower is better:
+
+```text
+Map Tree Packed        160.00 B | ########################################
+Map Block 2048 Packed  119.65 B | ##############################
+Map Block 4096 Packed  117.36 B | #############################
+```
+
+For the `ImtMap<int32, int32>` case with sorted input and 100,000 entries, the
+block-tree layout is stronger: both block sizes are faster to bulk-build and
+much smaller in allocated memory. Block 2048 is 70.1% faster to build, 3.3%
+faster on hit lookup, 63.8% faster on miss lookup, 47.1% faster on `ToVector()`,
+and 82.9% smaller in allocated memory than the tree. Block 4096 is 61.3% faster
+to build, 1.2% faster on hit lookup, 60.9% faster on miss lookup, 38.7% faster
+on `ToVector()`, and 83.1% smaller in allocated memory.
+
+| Implementation | Build mode | Build | Hit contains | Miss contains | To vector | Allocated | Allocated / entry | Height | Nodes | Average fill |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Map Tree int32 | `bulk_from_entries` | 6.95 ms | 10.31 ms | 5.63 ms | 393 us | 4.58 MiB | 48.00 B | 17 | - | - |
+| Map Block 2048 int32 | `bulk_from_entries` | 2.08 ms | 9.96 ms | 2.04 ms | 208 us | 800.00 KiB | 8.19 B | 9 | 400 | 1.000 |
+| Map Block 4096 int32 | `bulk_from_entries` | 2.69 ms | 10.18 ms | 2.20 ms | 241 us | 792.00 KiB | 8.11 B | 8 | 198 | 1.000 |
+
+Allocated bytes per entry for `int32 -> int32`, lower is better:
+
+```text
+Map Tree int32        48.00 B | ########################################
+Map Block 2048 int32   8.19 B | #######
+Map Block 4096 int32   8.11 B | #######
+```
+
+Experiment method:
+
+- Report generated at `2026-05-14T09:26:59+08:00` from
+  `build/immutable_tree_vs_block_tree_string.csv`.
+- Benchmark command: `./build/bench_block_tree_string_report_jemalloc`.
+- Allocator: jemalloc from `../thirdparty/jemalloc`.
+- The report contains 660 benchmark rows across `ImtMap` and `ImtSet`
+  families, with `std::string`, `PackedString`, and `int32` cases.
+- Sorted workloads use `bulk_from_entries`; random workloads use repeated
+  insert loops.
+- Tested sizes are 1, 10, 100, 1,000, 10,000, and 100,000 entries. Memory
+  charts use jemalloc deltas from one fresh benchmark process per case.
+
 ## Reference Count Policies
 
 The default `NonAtomicRefCount` policy uses a non-atomic intrusive counter and

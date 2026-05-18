@@ -12,15 +12,17 @@ STRING_REPORT_RAW := $(BUILD_DIR)/immutable_tree_vs_block_tree_string.csv
 STRING_REPORT_HTML := $(REPORT_DIR)/immutable_tree_vs_block_tree.html
 JEMALLOC_DIR ?= ../thirdparty/jemalloc
 JEMALLOC_OBJ_DIR ?= $(JEMALLOC_DIR)/obj
+JEMALLOC_SUBMODULE_PATH ?= thirdparty/jemalloc
+JEMALLOC_CONFIGURE_FLAGS ?= --enable-autogen
 JEMALLOC_INCLUDE := $(JEMALLOC_OBJ_DIR)/include
 JEMALLOC_STATIC_LIB := $(JEMALLOC_OBJ_DIR)/lib/libjemalloc.a
+JEMALLOC_SUBMODULE_STAMP := $(JEMALLOC_OBJ_DIR)/.submodule-head
 JEMALLOC_LOCAL_LIBS ?= -Wl,--whole-archive $(JEMALLOC_STATIC_LIB) -Wl,--no-whole-archive -pthread -ldl -lm
 TEST_SRCS := $(wildcard $(TEST_DIR)/*_test.cpp)
 TEST_BINS := $(patsubst $(TEST_DIR)/%.cpp,$(BUILD_DIR)/%,$(TEST_SRCS))
 BENCH_SRCS := $(filter-out $(STRING_REPORT_BENCH_SRC),$(wildcard $(BENCH_DIR)/*.cpp))
 BENCH_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%,$(BENCH_SRCS))
 JEMALLOC_BINS := $(patsubst $(BENCH_DIR)/%.cpp,$(BUILD_DIR)/bench_%_jemalloc,$(BENCH_SRCS))
-JEMALLOC_LIBS ?= -ljemalloc
 HEADERS := $(wildcard include/immutable_container/*.h)
 LINT_CPP_SRCS := $(TEST_SRCS)
 LINT_DIRS := include $(TEST_DIR)
@@ -31,7 +33,7 @@ CPPCHECK_FLAGS ?= --enable=all --std=c++17 -Iinclude --suppress=missingIncludeSy
 
 .DELETE_ON_ERROR:
 
-.PHONY: all test bench bench-jemalloc string-report clean lint
+.PHONY: all test bench bench-jemalloc string-report jemalloc update-jemalloc-submodule clean lint FORCE
 
 all: $(TEST_BINS)
 
@@ -47,10 +49,24 @@ $(BUILD_DIR)/%: $(TEST_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 $(BUILD_DIR)/bench_%: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
-$(BUILD_DIR)/bench_%_jemalloc: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CPPFLAGS) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LIBS)
+$(BUILD_DIR)/bench_%_jemalloc: $(BENCH_DIR)/%.cpp $(HEADERS) Makefile $(JEMALLOC_STATIC_LIB) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) -I$(JEMALLOC_INCLUDE) -DIMMUTABLE_CONTAINER_USE_JEMALLOC $(CXXFLAGS) $< -o $@ $(JEMALLOC_LOCAL_LIBS)
 
-$(JEMALLOC_STATIC_LIB):
+jemalloc: $(JEMALLOC_STATIC_LIB)
+
+update-jemalloc-submodule: $(JEMALLOC_SUBMODULE_STAMP)
+
+FORCE:
+
+$(JEMALLOC_SUBMODULE_STAMP): FORCE
+	git -C .. submodule update --init --remote -- $(JEMALLOC_SUBMODULE_PATH)
+	@mkdir -p $(JEMALLOC_OBJ_DIR)
+	@new_head=$$(git -C "$(JEMALLOC_DIR)" rev-parse HEAD); \
+	if [ ! -f "$@" ] || [ "$$(cat "$@")" != "$$new_head" ]; then \
+		printf '%s\n' "$$new_head" > "$@"; \
+	fi
+
+$(JEMALLOC_OBJ_DIR)/Makefile: $(JEMALLOC_SUBMODULE_STAMP)
 	@if [ ! -x "$(JEMALLOC_DIR)/autogen.sh" ]; then \
 		echo "missing $(JEMALLOC_DIR)/autogen.sh"; \
 		exit 1; \
@@ -59,9 +75,9 @@ $(JEMALLOC_STATIC_LIB):
 		cd "$(JEMALLOC_DIR)" && ./autogen.sh; \
 	fi
 	mkdir -p $(JEMALLOC_OBJ_DIR)
-	@if [ ! -f "$(JEMALLOC_OBJ_DIR)/Makefile" ]; then \
-		cd "$(JEMALLOC_OBJ_DIR)" && ../configure --enable-autogen; \
-	fi
+	cd "$(JEMALLOC_OBJ_DIR)" && ../configure $(JEMALLOC_CONFIGURE_FLAGS)
+
+$(JEMALLOC_STATIC_LIB): $(JEMALLOC_OBJ_DIR)/Makefile
 	$(MAKE) -C $(JEMALLOC_OBJ_DIR) lib/libjemalloc.a
 
 $(STRING_REPORT_BENCH_BIN): $(STRING_REPORT_BENCH_SRC) $(HEADERS) Makefile $(JEMALLOC_STATIC_LIB) | $(BUILD_DIR)

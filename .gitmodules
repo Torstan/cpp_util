@@ -1,0 +1,5 @@
+[submodule "thirdparty/jemalloc"]
+	path = thirdparty/jemalloc
+	url = git@github.com:jemalloc/jemalloc.git
+	branch = dev
+
