@@ -130,6 +130,14 @@ class ImmutableTree {
     return result;
   }
 
+  // Visits every (key, value) in ascending Comp order. Read-only; with the
+  // default NonAtomicRefCount, concurrent access to the same snapshot is the
+  // caller's responsibility. fn is invoked as fn(const Key&, const Value&).
+  template <typename F>
+  void ForEach(F&& fn) const {
+    ForEachInOrder(root_, fn);
+  }
+
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   long DebugRootUseCountForTest() const {
     return root_ ? static_cast<long>(root_->Load()) : 0;
@@ -363,6 +371,16 @@ class ImmutableTree {
     AppendInOrder(node->left, result);
     result->push_back({node->key, node->value});
     AppendInOrder(node->right, result);
+  }
+
+  template <typename F>
+  static void ForEachInOrder(const NodePtr& node, F& fn) {
+    if (!node) {
+      return;
+    }
+    ForEachInOrder(node->left, fn);
+    fn(node->key, node->value);
+    ForEachInOrder(node->right, fn);
   }
 
   static NodePtr BuildBalancedFromSorted(std::vector<Entry>* entries,

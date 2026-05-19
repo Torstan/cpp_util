@@ -333,6 +333,27 @@ void TestTreeSizePublicTypeAndValue() {
   RequireEqual(size, std::size_t{1000}, "Tree Size returns std::size_t value");
 }
 
+void TestForEachOnEmptyTreeDoesNothing() {
+  immutable_container::ImmutableTree<int, std::string> tree;
+  std::size_t count = 0;
+  tree.ForEach([&count](const int&, const std::string&) { ++count; });
+  RequireEqual(count, std::size_t{0}, "ForEach on empty tree never invokes callback");
+}
+
+void TestForEachVisitsAllInAscendingOrder() {
+  const auto tree = BuildTree({{3, "c"}, {1, "a"}, {4, "d"}, {5, "e"}, {2, "b"}});
+  std::vector<std::pair<int, std::string>> seen;
+  tree.ForEach([&seen](const int& key, const std::string& value) {
+    seen.emplace_back(key, value);
+  });
+  RequireEqual(seen.size(), std::size_t{5}, "ForEach visits every key once");
+  for (std::size_t i = 1; i < seen.size(); ++i) {
+    Require(seen[i - 1].first < seen[i].first,
+            "ForEach yields keys in strictly ascending order");
+  }
+  Require(seen == tree.ToVector(), "ForEach output matches ToVector");
+}
+
 }  // namespace
 
 int main() {
@@ -349,6 +370,8 @@ int main() {
     TestIntrusiveRefCountPolicyParameterAndLiveNodes();
     TestPackedStringTreeNodeLayoutBudget();
     TestTreeSizePublicTypeAndValue();
+    TestForEachOnEmptyTreeDoesNothing();
+    TestForEachVisitsAllInAscendingOrder();
     std::cout << "immutable_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
