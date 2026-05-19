@@ -648,6 +648,25 @@ void TestPackedStringBlockTreeUpdateCanSplitBlock() {
 #endif
 }
 
+void TestBlockTreeForEachOnEmptyTreeDoesNothing() {
+  immutable_container::ImmutableBlockTree<int, std::string> tree;
+  std::size_t count = 0;
+  tree.ForEach([&count](const int&, const std::string&) { ++count; });
+  RequireEqual(count, std::size_t{0}, "block tree ForEach on empty tree never invokes callback");
+}
+
+void TestBlockTreeForEachVisitsAllInAscendingOrder() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string>;
+  const auto tree = BuildTree<Tree>(
+      {{3, "c"}, {1, "a"}, {4, "d"}, {5, "e"}, {2, "b"}});
+  std::vector<std::pair<int, std::string>> seen;
+  tree.ForEach([&seen](const int& key, const std::string& value) {
+    seen.emplace_back(key, value);
+  });
+  RequireEqual(seen.size(), std::size_t{5}, "block tree ForEach visits every key once");
+  Require(seen == tree.ToVector(), "block tree ForEach output matches ToVector");
+}
+
 }  // namespace
 
 int main() {
@@ -670,6 +689,8 @@ int main() {
     TestPackedStringBlockTreeSetBehavior();
     TestPackedStringBlockTreeManySplitBlocks();
     TestPackedStringBlockTreeUpdateCanSplitBlock();
+    TestBlockTreeForEachOnEmptyTreeDoesNothing();
+    TestBlockTreeForEachVisitsAllInAscendingOrder();
     std::cout << "immutable_block_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
