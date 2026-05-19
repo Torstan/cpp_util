@@ -155,6 +155,14 @@ class ImmutableBlockTree {
     return result;
   }
 
+  // Visits every (key, value) in ascending Comp order. Read-only; with the
+  // default NonAtomicRefCount, concurrent access to the same snapshot is the
+  // caller's responsibility. fn is invoked as fn(const Key&, const Value&).
+  template <typename F>
+  void ForEach(F&& fn) const {
+    ForEachInOrder(root_, fn);
+  }
+
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   long DebugRootUseCountForTest() const {
     return root_ ? static_cast<long>(root_->Load()) : 0;
@@ -540,6 +548,28 @@ class ImmutableBlockTree {
     AppendInOrder(node->left, result);
     node->block.AppendTo(result);
     AppendInOrder(node->right, result);
+  }
+
+  template <typename F>
+  static void ForEachInOrder(const NodePtr& node, F& fn) {
+    if (!node) {
+      return;
+    }
+    ForEachInOrder(node->left, fn);
+    ForEachInBlock(node->block, fn);
+    ForEachInOrder(node->right, fn);
+  }
+
+  template <typename F>
+  static void ForEachInBlock(const Block& block, F& fn) {
+    const std::size_t count = block.Count();
+    for (std::size_t i = 0; i < count; ++i) {
+      // const auto& binds to const Key& for the normal ZipList<K,V>
+      // (zero copy) and lifetime-extends the temporary returned by the
+      // PackedString-specialized ZipList::KeyAtTransient (no extra cost).
+      const auto& key = block.KeyAtTransient(i);
+      fn(key, block.ValueAt(i));
+    }
   }
 
   static NodePtr BuildBalancedFromBlocks(std::vector<Block>* blocks, std::size_t begin,
