@@ -10,6 +10,7 @@ This repository contains small C++17 utility projects and experiments.
   implementations with functional tests and benchmark drivers.
 - `immutable_container`: immutable data structures, starting with a
   persistent AVL-backed ordered key-value tree.
+- `redis`: RESP2 pack/unpack helpers for Redis protocol messages.
 
 ## Build And Test
 
