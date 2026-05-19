@@ -354,6 +354,45 @@ void TestForEachVisitsAllInAscendingOrder() {
   Require(seen == tree.ToVector(), "ForEach output matches ToVector");
 }
 
+void TestForEachUntilStopsOnFalseAndReportsCompletion() {
+  const auto tree = BuildTree({{1, "a"}, {2, "b"}, {3, "c"}, {4, "d"}, {5, "e"}});
+
+  std::vector<int> seen_full;
+  const bool full_walk = tree.ForEachUntil(
+      [&seen_full](const int& key, const std::string&) {
+        seen_full.push_back(key);
+        return true;
+      });
+  Require(full_walk, "ForEachUntil returns true when never stopped");
+  RequireEqual(seen_full.size(), std::size_t{5}, "ForEachUntil completes when always true");
+
+  std::vector<int> seen_stopped;
+  const bool stopped = tree.ForEachUntil(
+      [&seen_stopped](const int& key, const std::string&) {
+        seen_stopped.push_back(key);
+        return key < 3;
+      });
+  Require(!stopped, "ForEachUntil returns false when callback returns false");
+  RequireEqual(seen_stopped.size(), std::size_t{3},
+               "ForEachUntil stops immediately after the false-returning call");
+  RequireEqual(seen_stopped.back(), 3, "ForEachUntil includes the key that triggered stop");
+}
+
+void TestForEachRespectsCustomComparator() {
+  immutable_container::ImmutableTree<int, std::string, std::greater<int>> tree;
+  for (const auto& item :
+       std::vector<std::pair<int, std::string>>{{1, "a"}, {3, "c"}, {2, "b"}}) {
+    auto next = tree.Insert(item.first, item.second);
+    Require(next.has_value(), "Insert into greater-ordered tree succeeds");
+    tree = *next;
+  }
+  std::vector<int> seen;
+  tree.ForEach([&seen](const int& key, const std::string&) { seen.push_back(key); });
+  RequireEqual(seen.size(), std::size_t{3}, "ForEach with greater visits all keys");
+  Require(seen[0] == 3 && seen[1] == 2 && seen[2] == 1,
+          "ForEach yields keys in Comp order (descending here)");
+}
+
 }  // namespace
 
 int main() {
@@ -372,6 +411,8 @@ int main() {
     TestTreeSizePublicTypeAndValue();
     TestForEachOnEmptyTreeDoesNothing();
     TestForEachVisitsAllInAscendingOrder();
+    TestForEachUntilStopsOnFalseAndReportsCompletion();
+    TestForEachRespectsCustomComparator();
     std::cout << "immutable_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
