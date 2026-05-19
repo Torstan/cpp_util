@@ -138,6 +138,13 @@ class ImmutableTree {
     ForEachInOrder(root_, fn);
   }
 
+  // Like ForEach, but fn returns bool: false short-circuits the walk.
+  // Returns true iff the walk completed without being stopped.
+  template <typename F>
+  bool ForEachUntil(F&& fn) const {
+    return ForEachInOrderUntil(root_, fn);
+  }
+
 #ifdef IMMUTABLE_CONTAINER_ENABLE_TEST_HELPERS
   long DebugRootUseCountForTest() const {
     return root_ ? static_cast<long>(root_->Load()) : 0;
@@ -381,6 +388,20 @@ class ImmutableTree {
     ForEachInOrder(node->left, fn);
     fn(node->key, node->value);
     ForEachInOrder(node->right, fn);
+  }
+
+  template <typename F>
+  static bool ForEachInOrderUntil(const NodePtr& node, F& fn) {
+    if (!node) {
+      return true;
+    }
+    if (!ForEachInOrderUntil(node->left, fn)) {
+      return false;
+    }
+    if (!fn(node->key, node->value)) {
+      return false;
+    }
+    return ForEachInOrderUntil(node->right, fn);
   }
 
   static NodePtr BuildBalancedFromSorted(std::vector<Entry>* entries,
