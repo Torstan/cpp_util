@@ -449,6 +449,34 @@ void TestImtMapForEachUntilPropagatesEarlyExit() {
   RequireEqual(seen.back(), 2, "ImtMap ForEachUntil includes the stopping key");
 }
 
+void TestImtSetForEachPassesOnlyKey() {
+  immutable_container::ImtSet<int> set;
+  for (int key : {3, 1, 4, 1, 5, 2}) {
+    set = set.Add(key);
+  }
+  std::vector<int> seen;
+  set.ForEach([&seen](const int& key) { seen.push_back(key); });
+  RequireEqual(seen.size(), std::size_t{5}, "ImtSet ForEach visits each unique key once");
+  for (std::size_t i = 1; i < seen.size(); ++i) {
+    Require(seen[i - 1] < seen[i], "ImtSet ForEach yields ascending keys");
+  }
+}
+
+void TestImtSetForEachUntilStopsOnFalse() {
+  immutable_container::ImtSet<int> set;
+  for (int key = 1; key <= 5; ++key) {
+    set = set.Add(key);
+  }
+  std::vector<int> seen;
+  const bool stopped = set.ForEachUntil([&seen](const int& key) {
+    seen.push_back(key);
+    return key < 3;
+  });
+  Require(!stopped, "ImtSet ForEachUntil returns false when stopped");
+  RequireEqual(seen.size(), std::size_t{3}, "ImtSet ForEachUntil stops after first false");
+  RequireEqual(seen.back(), 3, "ImtSet ForEachUntil includes the stopping key");
+}
+
 }  // namespace
 
 int main() {
@@ -464,6 +492,8 @@ int main() {
     TestPackedBlockMapValueStoragePersistence();
     TestImtMapForEachForwardsToTree();
     TestImtMapForEachUntilPropagatesEarlyExit();
+    TestImtSetForEachPassesOnlyKey();
+    TestImtSetForEachUntilStopsOnFalse();
     std::cout << "imt_map_set_test passed\n";
     return 0;
   } catch (const std::exception& e) {
