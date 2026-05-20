@@ -81,6 +81,16 @@ class ImtMap {
 
   std::vector<std::pair<Key, Value>> ToVector() const { return tree_.ToVector(); }
 
+  template <typename F>
+  void ForEach(F&& fn) const {
+    tree_.ForEach(std::forward<F>(fn));
+  }
+
+  template <typename F>
+  bool ForEachUntil(F&& fn) const {
+    return tree_.ForEachUntil(std::forward<F>(fn));
+  }
+
   template <typename T = Tree>
   auto DebugStatsForTest() const -> decltype(std::declval<const T&>().DebugStatsForTest()) {
     return tree_.DebugStatsForTest();

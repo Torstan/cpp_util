@@ -414,6 +414,41 @@ void TestPackedBlockMapValueStoragePersistence() {
   Require(first == second, "packed block map value pointer remains stable");
 }
 
+void TestImtMapForEachForwardsToTree() {
+  immutable_container::ImtMap<int, std::string> map;
+  for (const auto& item :
+       std::vector<std::pair<int, std::string>>{{3, "c"}, {1, "a"}, {2, "b"}}) {
+    auto next = map.Insert(item.first, item.second);
+    Require(next.has_value(), "ImtMap insert succeeds");
+    map = *next;
+  }
+  std::vector<std::pair<int, std::string>> seen;
+  map.ForEach([&seen](const int& key, const std::string& value) {
+    seen.emplace_back(key, value);
+  });
+  RequireEqual(seen.size(), std::size_t{3}, "ImtMap ForEach visits every entry");
+  Require(seen[0].first == 1 && seen[1].first == 2 && seen[2].first == 3,
+          "ImtMap ForEach yields ascending keys");
+}
+
+void TestImtMapForEachUntilPropagatesEarlyExit() {
+  immutable_container::ImtMap<int, std::string> map;
+  for (int key = 1; key <= 5; ++key) {
+    auto next = map.Insert(key, std::to_string(key));
+    Require(next.has_value(), "ImtMap insert succeeds during early-exit test");
+    map = *next;
+  }
+  std::vector<int> seen;
+  const bool stopped = map.ForEachUntil(
+      [&seen](const int& key, const std::string&) {
+        seen.push_back(key);
+        return key < 2;
+      });
+  Require(!stopped, "ImtMap ForEachUntil returns false when stopped");
+  RequireEqual(seen.size(), std::size_t{2}, "ImtMap ForEachUntil stops after first false");
+  RequireEqual(seen.back(), 2, "ImtMap ForEachUntil includes the stopping key");
+}
+
 }  // namespace
 
 int main() {
@@ -427,6 +462,8 @@ int main() {
     TestImtSetStringBackends();
     TestPackedMapAndSetBackends();
     TestPackedBlockMapValueStoragePersistence();
+    TestImtMapForEachForwardsToTree();
+    TestImtMapForEachUntilPropagatesEarlyExit();
     std::cout << "imt_map_set_test passed\n";
     return 0;
   } catch (const std::exception& e) {
