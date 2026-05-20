@@ -667,6 +667,76 @@ void TestBlockTreeForEachVisitsAllInAscendingOrder() {
   Require(seen == tree.ToVector(), "block tree ForEach output matches ToVector");
 }
 
+void TestBlockTreeForEachUntilStopsOnFalse() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string>;
+  const auto tree = BuildTree<Tree>(
+      {{1, "a"}, {2, "b"}, {3, "c"}, {4, "d"}, {5, "e"}});
+
+  std::vector<int> seen_full;
+  const bool full_walk = tree.ForEachUntil(
+      [&seen_full](const int& key, const std::string&) {
+        seen_full.push_back(key);
+        return true;
+      });
+  Require(full_walk, "block tree ForEachUntil returns true on full walk");
+  RequireEqual(seen_full.size(), std::size_t{5}, "block tree ForEachUntil visits all on true");
+
+  std::vector<int> seen_stopped;
+  const bool stopped = tree.ForEachUntil(
+      [&seen_stopped](const int& key, const std::string&) {
+        seen_stopped.push_back(key);
+        return key < 3;
+      });
+  Require(!stopped, "block tree ForEachUntil returns false when stopped");
+  RequireEqual(seen_stopped.size(), std::size_t{3},
+               "block tree ForEachUntil stops immediately after false");
+  RequireEqual(seen_stopped.back(), 3,
+               "block tree ForEachUntil includes the stopping key");
+}
+
+void TestBlockTreeForEachAcrossBlockBoundariesPreservesOrder() {
+  using Tree = immutable_container::ImmutableBlockTree<int, std::string>;
+  Tree tree;
+  for (int key = 0; key < 2000; ++key) {
+    auto next = tree.Insert(key, std::to_string(key));
+    Require(next.has_value(), "block tree insert succeeds during cross-block test");
+    tree = *next;
+  }
+  const auto stats = tree.DebugStatsForTest();
+  Require(stats.zip_list_count > 1,
+          "cross-block ForEach test must actually exercise multiple blocks");
+
+  std::vector<int> seen_keys;
+  seen_keys.reserve(2000);
+  tree.ForEach([&seen_keys](const int& key, const std::string&) {
+    seen_keys.push_back(key);
+  });
+  RequireEqual(seen_keys.size(), std::size_t{2000},
+               "ForEach visits all 2000 entries across blocks");
+  for (std::size_t i = 0; i < seen_keys.size(); ++i) {
+    RequireEqual(seen_keys[i], static_cast<int>(i),
+                 "ForEach yields strictly ascending keys across blocks");
+  }
+}
+
+void TestBlockTreeForEachWithPackedStringKeys() {
+  using PackedString = immutable_container::PackedString;
+  using Tree = immutable_container::ImmutableBlockTree<PackedString, int>;
+  Tree tree;
+  for (int key = 0; key < 200; ++key) {
+    auto next = tree.Insert(PackedKey(key), key);
+    Require(next.has_value(), "packed-key block tree insert succeeds");
+    tree = *next;
+  }
+  std::vector<std::pair<PackedString, int>> seen;
+  seen.reserve(200);
+  tree.ForEach([&seen](const PackedString& key, const int& value) {
+    seen.emplace_back(key, value);
+  });
+  Require(seen == tree.ToVector(),
+          "ForEach with PackedString keys matches ToVector ordering and contents");
+}
+
 }  // namespace
 
 int main() {
@@ -691,6 +761,9 @@ int main() {
     TestPackedStringBlockTreeUpdateCanSplitBlock();
     TestBlockTreeForEachOnEmptyTreeDoesNothing();
     TestBlockTreeForEachVisitsAllInAscendingOrder();
+    TestBlockTreeForEachUntilStopsOnFalse();
+    TestBlockTreeForEachAcrossBlockBoundariesPreservesOrder();
+    TestBlockTreeForEachWithPackedStringKeys();
     std::cout << "immutable_block_tree_test passed\n";
     return 0;
   } catch (const std::exception& e) {
