@@ -83,6 +83,18 @@ class ImtSet {
     return result;
   }
 
+  template <typename F>
+  void ForEach(F&& fn) const {
+    tree_.ForEach(
+        [&fn](const Key& key, const UnitValue&) { fn(key); });
+  }
+
+  template <typename F>
+  bool ForEachUntil(F&& fn) const {
+    return tree_.ForEachUntil(
+        [&fn](const Key& key, const UnitValue&) { return fn(key); });
+  }
+
   template <typename T = Tree>
   auto DebugStatsForTest() const -> decltype(std::declval<const T&>().DebugStatsForTest()) {
     return tree_.DebugStatsForTest();
