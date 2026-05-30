@@ -1,4 +1,4 @@
-SUBDIRS := computational_geometry concurrent_queue immutable_container redis
+SUBDIRS := computational_geometry concurrent_queue conn_util immutable_container redis
 
 .PHONY: all test clean lint test-lint $(SUBDIRS)
 
